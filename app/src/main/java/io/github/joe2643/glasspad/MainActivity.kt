@@ -42,6 +42,7 @@ import io.github.joe2643.glasspad.core.DisplayInfo
 class MainActivity : Activity() {
 
     private lateinit var touchpad: TouchpadView
+    private lateinit var setupCard: View
     private lateinit var statusText: TextView
     private lateinit var statusDot: GradientDrawable
     private lateinit var scaleButton: ImageButton
@@ -125,11 +126,21 @@ class MainActivity : Activity() {
                 svc.onState = { renderState(it) }
             }
         }
-        if (svc == null) setStatus("Tap to turn on GlassPad in Accessibility", Ui.WARN)
+        if (svc == null) {
+            setStatus("Accessibility is off — tap to turn on", Ui.WARN, textColor = Ui.WARN)
+            setNeedsSetup(true)
+        }
         handler.postDelayed(pollRunnable, POLL_MS)
     }
 
+    /** The setup card covers the trackpad until the accessibility service is on. */
+    private fun setNeedsSetup(needed: Boolean) {
+        setupCard.visibility = if (needed) View.VISIBLE else View.GONE
+        touchpad.guideVisible = !needed
+    }
+
     private fun renderState(s: GlassPadA11yService.State) {
+        setNeedsSetup(false)
         val ext = s.external
         if (ext == null) setStatus("Connect a display in Desktop mode", Ui.WARN)
         else setStatus("Ready · ${ext.width}×${ext.height}", Ui.GOOD)
@@ -142,9 +153,53 @@ class MainActivity : Activity() {
         if (scalePanel.visibility == View.VISIBLE) refreshScale()
     }
 
-    private fun setStatus(text: String, color: Int) {
+    private fun setStatus(text: String, color: Int, textColor: Int = Ui.MUTED) {
         statusText.text = text
+        statusText.setTextColor(textColor)
         statusDot.setColor(color)
+    }
+
+    private fun buildSetupCard() = LinearLayout(this).apply {
+        orientation = LinearLayout.VERTICAL
+        gravity = Gravity.CENTER_HORIZONTAL
+        setPadding(dp(24), dp(28), dp(24), dp(22))
+        background = Ui.rounded(Ui.SHEET, dp(22).toFloat(), dp(1), Ui.WARN_SOFT)
+        elevation = dp(4).toFloat()
+        isClickable = true // touches on the card never reach the trackpad behind it
+        visibility = View.GONE
+        addView(ImageView(this@MainActivity).apply {
+            setImageResource(R.drawable.ic_accessibility)
+            imageTintList = tint(Ui.WARN)
+            background = Ui.oval(Ui.WARN_SOFT)
+            scaleType = ImageView.ScaleType.FIT_CENTER
+            setPadding(dp(15), dp(15), dp(15), dp(15))
+        }, LinearLayout.LayoutParams(dp(64), dp(64)))
+        addView(TextView(this@MainActivity).apply {
+            text = "Turn on GlassPad"; setTextColor(Ui.TEXT); textSize = 21f; typeface = MEDIUM
+            gravity = Gravity.CENTER; setPadding(0, dp(18), 0, 0)
+        })
+        addView(TextView(this@MainActivity).apply {
+            text = "GlassPad moves the cursor, clicks and types on your display through an " +
+                "Accessibility service. Turn it on once — nothing leaves your phone."
+            setTextColor(Ui.MUTED); textSize = 14f; gravity = Gravity.CENTER
+            setLineSpacing(0f, 1.2f); setPadding(0, dp(8), 0, 0)
+        })
+        addView(Button(this@MainActivity).apply {
+            text = "Open Accessibility settings"; setTextColor(Ui.ON_ACCENT); textSize = 15f
+            typeface = MEDIUM; isAllCaps = false; stateListAnimator = null
+            background = Ui.pressable(Ui.ACCENT, dp(26).toFloat())
+            setOnClickListener { v -> hapticTap(v); openAccessibilitySettings() }
+        }, LinearLayout.LayoutParams(MATCH, dp(52)).apply { topMargin = dp(22) })
+        addView(TextView(this@MainActivity).apply {
+            text = "Then choose GlassPad and switch it on."
+            setTextColor(Ui.MUTED); textSize = 13f; gravity = Gravity.CENTER
+            setPadding(0, dp(12), 0, 0)
+        })
+        addView(TextView(this@MainActivity).apply {
+            text = "Switch greyed out? Settings › Apps › GlassPad › ⋮ › Allow restricted settings"
+            setTextColor(Ui.FAINT); textSize = 12f; gravity = Gravity.CENTER
+            setPadding(0, dp(6), 0, 0)
+        })
     }
 
     /** Runs [block] with the accessibility service, or says why nothing happened. */
@@ -154,7 +209,7 @@ class MainActivity : Activity() {
     }
 
     private fun needService() {
-        Toast.makeText(this, "Turn on GlassPad in Accessibility first — tap the status line", Toast.LENGTH_SHORT).show()
+        Toast.makeText(this, "Turn on GlassPad in Accessibility first", Toast.LENGTH_SHORT).show()
     }
 
     private fun openAccessibilitySettings() {
@@ -558,6 +613,13 @@ class MainActivity : Activity() {
         touchpad = TouchpadView(this).apply {
             background = Ui.rounded(Ui.PAD, dp(24).toFloat(), dp(1), Ui.PAD_BORDER)
         }
+        setupCard = buildSetupCard()
+        val padArea = FrameLayout(this).apply {
+            addView(touchpad, FrameLayout.LayoutParams(MATCH, MATCH))
+            addView(setupCard, FrameLayout.LayoutParams(MATCH, WRAP, Gravity.CENTER).apply {
+                marginStart = dp(14); marginEnd = dp(14)
+            })
+        }
 
         // Bottom sheet: optional keyboard / scale panel above an always-on nav row.
         keyboardPanel = buildKeyboardPanel()
@@ -573,7 +635,7 @@ class MainActivity : Activity() {
         val column = LinearLayout(this).apply {
             orientation = LinearLayout.VERTICAL
             addView(header, LinearLayout.LayoutParams(MATCH, WRAP))
-            addView(touchpad, LinearLayout.LayoutParams(MATCH, 0, 1f).apply {
+            addView(padArea, LinearLayout.LayoutParams(MATCH, 0, 1f).apply {
                 marginStart = dp(12); marginEnd = dp(12); bottomMargin = dp(12)
             })
             addView(bottomSheet, LinearLayout.LayoutParams(MATCH, WRAP))

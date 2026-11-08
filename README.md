@@ -49,7 +49,7 @@ without replacing it.
 GlassPad needs one permission: an **Accessibility** service, which is what lets it move a cursor,
 click and type on the external display.
 
-1. Open GlassPad and tap **GlassPad** at the top ("Tap to turn on GlassPad in Accessibility").
+1. Open GlassPad and tap **Open Accessibility settings** on the "Turn on GlassPad" card.
 2. In the Accessibility list choose **GlassPad**, turn it **on**, and confirm.
 3. Come back. The dot turns green once a display is connected.
 
@@ -136,8 +136,8 @@ haptic tap.
 - **Back / home / recents or typing do nothing** — click once on the desktop first. Android only
   lets GlassPad see the desktop's windows while the desktop has focus.
 - **Typing doesn't appear** — click the desktop text field with the trackpad first.
-- **"Tap to turn on GlassPad in Accessibility"** — the service was turned off (some battery savers
-  do this). Tap it and turn GlassPad back on.
+- **The "Turn on GlassPad" card is back** — the service was turned off (some battery savers do
+  this). Tap **Open Accessibility settings** and turn GlassPad back on.
 - **Fullscreen or desktop scale shows an adb command** — run the grant from
   [Optional extras](#optional-extras-one-adb-command-each).
 - **Something specific misbehaves** — `adb logcat -s GlassPadGesture GlassPadNav GlassPadShell GlassPadA11y`

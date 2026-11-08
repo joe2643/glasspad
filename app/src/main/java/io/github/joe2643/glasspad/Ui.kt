@@ -25,6 +25,7 @@ object Ui {
     val ON_ACCENT = 0xFF04121C.toInt()
     const val ACCENT_SOFT = 0x335CC8FF
     val WARN = 0xFFE3B341.toInt()
+    const val WARN_SOFT = 0x33E3B341
     val GOOD = 0xFF3FB950.toInt()
     const val RIPPLE = 0x33FFFFFF
     val SCRIM = 0xE6080B10.toInt()

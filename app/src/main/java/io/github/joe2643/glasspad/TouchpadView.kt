@@ -43,6 +43,10 @@ class TouchpadView @JvmOverloads constructor(
     }
     private var hintAlpha = 1f
 
+    /** Whether the gesture guide may show (hidden while the setup card covers the pad). */
+    var guideVisible = true
+        set(value) { field = value; invalidate() }
+
     override fun onTouchEvent(event: MotionEvent): Boolean {
         val sink = onPadFrame
         when (event.actionMasked) {
@@ -73,7 +77,7 @@ class TouchpadView @JvmOverloads constructor(
     }
 
     private fun trackFingers(e: MotionEvent) {
-        if (e.actionMasked == MotionEvent.ACTION_DOWN && hintAlpha == 1f) fadeHint()
+        if (e.actionMasked == MotionEvent.ACTION_DOWN && guideVisible && hintAlpha == 1f) fadeHint()
         fingers.clear()
         if (e.actionMasked != MotionEvent.ACTION_UP && e.actionMasked != MotionEvent.ACTION_CANCEL) {
             for (i in 0 until e.pointerCount) {
@@ -94,7 +98,7 @@ class TouchpadView @JvmOverloads constructor(
 
     override fun onDraw(canvas: Canvas) {
         super.onDraw(canvas)
-        if (hintAlpha > 0f) drawHint(canvas)
+        if (guideVisible && hintAlpha > 0f) drawHint(canvas)
         val r = px(26f)
         for (p in fingers.values) {
             canvas.drawCircle(p.x, p.y, r, fingerFill)
