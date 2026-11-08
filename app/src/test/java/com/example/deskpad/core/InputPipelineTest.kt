@@ -22,6 +22,18 @@ class InputPipelineTest {
         override fun key(displayId: Int, keyCode: Int, metaState: Int, down: Boolean) {
             calls += Call("key", listOf(displayId, keyCode, metaState, down))
         }
+        override fun pinchBegin(displayId: Int, x: Float, y: Float) {
+            calls += Call("pinchBegin", listOf(displayId, x, y))
+        }
+        override fun pinchScale(displayId: Int, scale: Float) {
+            calls += Call("pinchScale", listOf(displayId, scale))
+        }
+        override fun pinchEnd(displayId: Int) {
+            calls += Call("pinchEnd", listOf(displayId))
+        }
+        override fun navigate(displayId: Int, target: NavTarget) {
+            calls += Call("navigate", listOf(displayId, target))
+        }
     }
 
     private fun build(lock: LockController): Pair<InputPipeline, FakeInputSink> {
@@ -49,12 +61,34 @@ class InputPipelineTest {
         assertEquals(1, sink.calls.count { it.name == "scroll" })
     }
 
+    @Test fun pinchHappensAtTheCursor() {
+        val (pipeline, sink) = build(LockController())
+        pipeline.dispatch(2, GestureAction.Move(100f, 50f)) // cursor starts centred at (500, 500)
+        sink.calls.clear()
+        pipeline.dispatch(2, GestureAction.PinchStart)
+        pipeline.dispatch(2, GestureAction.Pinch(1.25f))
+        pipeline.dispatch(2, GestureAction.PinchEnd)
+        assertEquals(
+            listOf("pinchBegin" to listOf<Any?>(2, 600f, 550f), "pinchScale" to listOf<Any?>(2, 1.25f), "pinchEnd" to listOf<Any?>(2)),
+            sink.calls.map { it.name to it.args },
+        )
+    }
+
+    @Test fun navigateForwards() {
+        val (pipeline, sink) = build(LockController())
+        pipeline.dispatch(2, GestureAction.Navigate(NavTarget.BACK))
+        assertEquals(listOf("navigate" to listOf<Any?>(2, NavTarget.BACK)), sink.calls.map { it.name to it.args })
+    }
+
     @Test fun lockedDropsEveryAction() {
         val lock = LockController().apply { lock() }
         val (pipeline, sink) = build(lock)
         pipeline.dispatch(2, GestureAction.Move(10f, 0f))
         pipeline.dispatch(2, GestureAction.LeftClick)
         pipeline.dispatch(2, GestureAction.Scroll(0f, 20f))
+        pipeline.dispatch(2, GestureAction.PinchStart)
+        pipeline.dispatch(2, GestureAction.Pinch(1.25f))
+        pipeline.dispatch(2, GestureAction.Navigate(NavTarget.HOME))
         assertTrue("locked pipeline must not call the sink", sink.calls.isEmpty())
     }
 }

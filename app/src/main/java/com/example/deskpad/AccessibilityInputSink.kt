@@ -6,7 +6,12 @@ import android.accessibilityservice.GestureDescription.StrokeDescription
 import android.graphics.Path
 import android.util.Log
 import com.example.deskpad.core.InputSink
+import com.example.deskpad.core.NavTarget
+import android.graphics.PointF
 import kotlin.math.abs
+import kotlin.math.max
+import kotlin.math.min
+import kotlin.math.sqrt
 
 /**
  * Drives the external display with no adb/root: pointer movement repositions the drawn [CursorOverlay];
@@ -19,6 +24,7 @@ import kotlin.math.abs
  *  - **Drag**: a *continued* gesture — the touch goes down and stays down, each segment continuing
  *    the last toward the current finger position, until release. Dispatching the whole drag as one
  *    stroke on release instead made the dragged item lurch at the end (the "delayed drag").
+ *  - **Pinch**: the drag's technique with two strokes, mirrored around the cursor.
  *
  * Everything here runs on the main thread — pad frames and gesture callbacks both arrive there — so
  * no synchronization is needed.
@@ -26,6 +32,8 @@ import kotlin.math.abs
 class AccessibilityInputSink(
     private val service: AccessibilityService,
     private val overlay: CursorOverlay,
+    /** Back / home / recents: the service clicks the desktop taskbar's buttons. */
+    private val onNavigate: (NavTarget) -> Unit,
 ) : InputSink {
 
     private var boundsW = Float.MAX_VALUE
@@ -47,6 +55,26 @@ class AccessibilityInputSink(
     private var dragToX = 0f           // latest finger position to continue toward
     private var dragToY = 0f
 
+    // Live pinch state: two continued strokes (one per finger), mirrored around the cursor.
+    private var pinching = false
+    private var pinchInFlight = false
+    private var pinchEnd = false       // release requested; the next segment lifts both fingers
+    private var pinchClosing = false   // the lifting segment has been dispatched
+    private var pinchDisplayId = INVALID
+    private var pinchStrokes: Pair<StrokeDescription, StrokeDescription>? = null
+    private var pinchCx = 0f
+    private var pinchCy = 0f
+    private var pinchUx = 1f           // unit vector along which the two fingers lie
+    private var pinchUy = 0f
+    private var pinchOff = 0f          // sideways offset where the current segment ends (hold nudges)
+    private var pinchSpan = 0f         // finger distance where the current segment ends
+    private var pinchStartSpan = 0f
+    private var pinchTarget = 0f       // the distance to move toward
+    private var pinchMin = 0f
+    private var pinchMax = 0f
+    private var pinchNudge = 1f
+    private var xdpi = 0f
+
     // Scroll state.
     private var scrollAccum = 0f
     private var scrollInFlight = false
@@ -54,9 +82,11 @@ class AccessibilityInputSink(
     private var scrollY = 0f
     private var scrollDisplayId = INVALID
 
-    fun setDisplayBounds(width: Float, height: Float) {
+    /** The external display's size in px, and its physical horizontal dpi (0 if unknown). */
+    fun setDisplayBounds(width: Float, height: Float, xdpi: Float) {
         boundsW = width
         boundsH = height
+        this.xdpi = xdpi
     }
 
     override fun moveCursor(displayId: Int, x: Float, y: Float) {
@@ -188,6 +218,112 @@ class AccessibilityInputSink(
         // Text goes through the service's keyboard path, not here.
     }
 
+    override fun navigate(displayId: Int, target: NavTarget) = onNavigate(target)
+
+    // ---- live pinch (two continued strokes) ----
+    //
+    // Same idea as the drag: both fingers go down and stay down; one segment is in flight at a
+    // time, and each continues both strokes toward the latest target distance. The distance on
+    // the desktop is the start distance × the phone's scale, so apps zoom by the same factor.
+
+    override fun pinchBegin(displayId: Int, x: Float, y: Float) {
+        if (pinching) return
+        pinchDisplayId = displayId
+        pinchCx = clampX(x)
+        pinchCy = clampY(y)
+        // Lay the fingers along whichever axis has more room around the cursor; both must stay on
+        // the display, so that room is the widest they can spread.
+        val hRoom = 2f * (min(pinchCx, boundsW - pinchCx) - EDGE_MARGIN)
+        val vRoom = 2f * (min(pinchCy, boundsH - pinchCy) - EDGE_MARGIN)
+        if (hRoom >= vRoom) { pinchUx = 1f; pinchUy = 0f } else { pinchUx = 0f; pinchUy = 1f }
+        pinchMax = max(hRoom, vRoom).coerceAtLeast(4f)
+        // Apps' ScaleGestureDetector stops scaling once the fingers are closer than
+        // config_minScalingSpan (27 mm on the display), so never go below 30 mm.
+        val minSpan = if (xdpi > 0f) MIN_PINCH_MM * xdpi / 25.4f else FALLBACK_MIN_SPAN
+        pinchMin = minSpan.coerceAtMost(pinchMax / 2f)
+        // Start halfway between the two on a log scale: as much room to zoom in as to zoom out.
+        pinchStartSpan = sqrt(pinchMin * pinchMax)
+        Log.d(TAG, "pinch at (${pinchCx.toInt()}, ${pinchCy.toInt()}) span ${pinchMin.toInt()}…${pinchStartSpan.toInt()}…${pinchMax.toInt()} px")
+        pinchSpan = pinchStartSpan
+        pinchTarget = pinchSpan
+        pinching = true; pinchEnd = false; pinchClosing = false
+        // The initial strokes press both fingers down and must be non-degenerate: 1 px sideways.
+        val (a0, b0) = pinchEnds(pinchSpan, 0f)
+        pinchOff = 1f
+        val (a1, b1) = pinchEnds(pinchSpan, pinchOff)
+        dispatchPinch(
+            StrokeDescription(line(a0, a1), 0L, PINCH_SEG_MS, true),
+            StrokeDescription(line(b0, b1), 0L, PINCH_SEG_MS, true),
+        )
+    }
+
+    override fun pinchScale(displayId: Int, scale: Float) {
+        if (!pinching) return
+        pinchTarget = (pinchStartSpan * scale).coerceIn(pinchMin, pinchMax)
+        if (!pinchInFlight) advancePinch()
+    }
+
+    /** The two finger positions [span] apart around the centre, [off] px across their axis. */
+    private fun pinchEnds(span: Float, off: Float): Pair<PointF, PointF> {
+        val h = span / 2f
+        val ox = pinchUy * off // perpendicular to (ux, uy)
+        val oy = pinchUx * off
+        return PointF(pinchCx - pinchUx * h + ox, pinchCy - pinchUy * h + oy) to
+            PointF(pinchCx + pinchUx * h + ox, pinchCy + pinchUy * h + oy)
+    }
+
+    private fun line(from: PointF, to: PointF) = Path().apply { moveTo(from.x, from.y); lineTo(to.x, to.y) }
+
+    override fun pinchEnd(displayId: Int) {
+        if (!pinching) return
+        pinchEnd = true
+        if (!pinchInFlight) advancePinch()
+    }
+
+    private fun advancePinch() {
+        val (prevA, prevB) = pinchStrokes ?: return
+        val willContinue = !pinchEnd
+        if (!willContinue) pinchClosing = true
+        val (fromA, fromB) = pinchEnds(pinchSpan, pinchOff)
+        if (abs(pinchTarget - pinchSpan) >= 1f) {
+            pinchSpan = pinchTarget
+        } else {
+            // Holding still: nudge both fingers 1 px sideways (alternating) so the segment isn't
+            // degenerate. Moving both the same way leaves their distance — the zoom — unchanged.
+            pinchNudge = -pinchNudge
+            pinchOff += pinchNudge
+        }
+        val (toA, toB) = pinchEnds(pinchSpan, pinchOff)
+        dispatchPinch(
+            prevA.continueStroke(line(fromA, toA), 0L, PINCH_SEG_MS, willContinue),
+            prevB.continueStroke(line(fromB, toB), 0L, PINCH_SEG_MS, willContinue),
+        )
+    }
+
+    private fun dispatchPinch(a: StrokeDescription, b: StrokeDescription) {
+        pinchStrokes = a to b
+        val gesture = GestureDescription.Builder().addStroke(a).addStroke(b).setDisplayId(pinchDisplayId).build()
+        pinchInFlight = true
+        val started = try {
+            service.dispatchGesture(gesture, object : AccessibilityService.GestureResultCallback() {
+                override fun onCompleted(d: GestureDescription?) { pinchInFlight = false; onPinchSegmentDone() }
+                override fun onCancelled(d: GestureDescription?) { pinchInFlight = false; endPinchState() }
+            }, null)
+        } catch (t: Throwable) {
+            Log.e(TAG, "pinch gesture failed", t); false
+        }
+        if (!started) { pinchInFlight = false; endPinchState() }
+    }
+
+    private fun onPinchSegmentDone() {
+        if (!pinching) return
+        if (pinchClosing) endPinchState() else advancePinch()
+    }
+
+    private fun endPinchState() {
+        pinching = false; pinchEnd = false; pinchClosing = false; pinchStrokes = null
+    }
+
     // ---- one-shot strokes (tap / right-click) ----
 
     private fun dispatchStroke(displayId: Int, x1: Float, y1: Float, x2: Float, y2: Float, durMs: Long) {
@@ -218,5 +354,9 @@ class AccessibilityInputSink(
         const val MIN_SCROLL = 24f    // ignore sub-slop jitter; must exceed the view's touch slop
         const val MAX_SWIPE = 320f    // cap per-swipe travel (px) so a burst isn't a screen-long fling
         const val SCROLL_MS = 90L     // short enough to feel responsive, long enough to register
+        const val PINCH_SEG_MS = 45L  // per continued-pinch segment, like the drag
+        const val MIN_PINCH_MM = 30f  // above Android's config_minScalingSpan of 27 mm
+        const val FALLBACK_MIN_SPAN = 360f // px, when the display's dpi is unknown
+        const val EDGE_MARGIN = 8f
     }
 }

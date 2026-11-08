@@ -34,6 +34,13 @@ class InputPipeline(
                 val p = cursor.positionFor(displayId)
                 sink.button(displayId, p.x, p.y, primary = true, down = false)
             }
+            GestureAction.PinchStart -> {
+                val p = cursor.positionFor(displayId)
+                sink.pinchBegin(displayId, p.x, p.y)
+            }
+            is GestureAction.Pinch -> sink.pinchScale(displayId, action.scale)
+            GestureAction.PinchEnd -> sink.pinchEnd(displayId)
+            is GestureAction.Navigate -> sink.navigate(displayId, action.target)
         }
     }
 

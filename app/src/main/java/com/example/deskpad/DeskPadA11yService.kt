@@ -20,6 +20,7 @@ import com.example.deskpad.core.CursorController
 import com.example.deskpad.core.DisplayInfo
 import com.example.deskpad.core.DisplayTargetResolver
 import com.example.deskpad.core.GestureAction
+import com.example.deskpad.core.GestureConfig
 import com.example.deskpad.core.GestureRecognizer
 import com.example.deskpad.core.InputPipeline
 import com.example.deskpad.core.LockController
@@ -44,8 +45,9 @@ class DeskPadA11yService : AccessibilityService() {
         set(value) { field = value; value?.invoke(currentState()) }
 
     private val lock = LockController()
-    private val cursor = CursorController(sensitivity = 1.4f)
-    private val gestures = GestureRecognizer()
+    // Gain comes from the recognizer's pointer acceleration, so the cursor itself is 1:1.
+    private val cursor = CursorController(sensitivity = 1f)
+    private lateinit var gestures: GestureRecognizer
     private val resolver = DisplayTargetResolver()
 
     private lateinit var overlay: CursorOverlay
@@ -71,8 +73,11 @@ class DeskPadA11yService : AccessibilityService() {
 
     override fun onServiceConnected() {
         super.onServiceConnected()
+        // Gesture thresholds are physical millimetres; the phone's real dpi converts them to px.
+        val dm = resources.displayMetrics
+        gestures = GestureRecognizer(GestureConfig(pxPerMm = (dm.xdpi + dm.ydpi) / 2f / 25.4f))
         overlay = CursorOverlay(this)
-        sink = AccessibilityInputSink(this, overlay)
+        sink = AccessibilityInputSink(this, overlay) { target -> navigate(NavButton.valueOf(target.name)) }
         pipeline = InputPipeline(sink, cursor, lock)
         displayManager = getSystemService(Context.DISPLAY_SERVICE) as DisplayManager
         displayManager.registerDisplayListener(displayListener, main)
@@ -114,8 +119,15 @@ class DeskPadA11yService : AccessibilityService() {
     /** Called on the main thread (touch events). Runs the whole pipeline inline. */
     fun submitPadFrame(frame: PadFrame) {
         val displayId = targetDisplayId
-        if (displayId == INVALID) return
+        if (displayId == INVALID || !::gestures.isInitialized) return
         for (action in gestures.onFrame(frame)) {
+            // Discrete actions only (not per-frame motion): `adb logcat -s DeskPadGesture` shows
+            // exactly which touches turned into clicks or drags.
+            if (action !is GestureAction.Move && action !is GestureAction.DragMove &&
+                action !is GestureAction.Scroll && action !is GestureAction.Pinch
+            ) {
+                Log.d(GESTURE_TAG, "$action")
+            }
             // Remember where the user clicked on the desktop — that's the text field to type into,
             // since it is never truly input-focused while this app is foreground.
             if (action == GestureAction.LeftClick) {
@@ -396,7 +408,9 @@ class DeskPadA11yService : AccessibilityService() {
         targetDisplayId = external?.id ?: INVALID
         if (external != null) {
             cursor.setBounds(external.id, Bounds(external.width.toFloat(), external.height.toFloat()))
-            sink.setDisplayBounds(external.width.toFloat(), external.height.toFloat())
+            val xdpi = displayManager.getDisplay(external.id)
+                ?.let { d -> DisplayMetrics().also { @Suppress("DEPRECATION") d.getRealMetrics(it) }.xdpi } ?: 0f
+            sink.setDisplayBounds(external.width.toFloat(), external.height.toFloat(), xdpi)
             displayManager.getDisplay(external.id)?.let { overlay.attach(it) }
             // Do NOT re-centre here — setBounds preserves the current position across refreshes.
             val p = cursor.positionFor(external.id)
@@ -427,6 +441,7 @@ class DeskPadA11yService : AccessibilityService() {
 
     companion object {
         private const val INVALID = -1
+        private const val GESTURE_TAG = "DeskPadGesture"
         private const val NAV_TAG = "DeskPadNav"
         private const val A11Y_TAG = "DeskPadA11y"
         private const val SLOW_WINDOWS_MS = 200L
