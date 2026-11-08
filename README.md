@@ -86,7 +86,7 @@ adb shell pm grant io.github.joe2643.glasspad android.permission.WRITE_SECURE_SE
 ```
 
 **Your phone's keyboard for desktop text fields** (recommended): with the glasses or monitor
-connected, run
+connected, run this (GlassPad's display panel has a **Copy adb command** button for it):
 
 ```bash
 adb shell 'CLASSPATH=$(pm path io.github.joe2643.glasspad | cut -d: -f2) app_process / io.github.joe2643.glasspad.tools.KeyboardOnPhone phone'
@@ -130,7 +130,7 @@ a short guide until you first touch it.
 
 | Icon | What it does |
 |---|---|
-| Monitor | Desktop scale: drag the slider (or **Smaller** / **Bigger**) to fit more on the desktop; **Reset** returns to the display's default. Remembered per display. On VITURE glasses 240 dpi works well. |
+| Monitor | Display settings. Desktop scale: drag the slider (or **Smaller** / **Bigger**) to fit more on the desktop; **Reset** returns to the display's default. Remembered per display. On VITURE glasses 240 dpi works well. **Copy adb command** copies the one-time keyboard-on-the-phone command. |
 | Keyboard | Shows the keyboard. |
 | Padlock | Locks the trackpad: nothing reaches the desktop until you **hold** "Hold to unlock". Handy when you put the phone down. |
 

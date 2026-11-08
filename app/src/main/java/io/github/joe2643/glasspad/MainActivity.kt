@@ -2,6 +2,8 @@ package io.github.joe2643.glasspad
 
 import android.animation.ValueAnimator
 import android.app.Activity
+import android.content.ClipData
+import android.content.ClipboardManager
 import android.content.Intent
 import android.graphics.Typeface
 import android.graphics.drawable.ClipDrawable
@@ -35,6 +37,7 @@ import android.widget.Toast
 import io.github.joe2643.glasspad.Ui.tint
 import io.github.joe2643.glasspad.core.DesktopScale
 import io.github.joe2643.glasspad.core.DisplayInfo
+import io.github.joe2643.glasspad.tools.KeyboardOnPhone
 
 /**
  * The phone UI: a header (status + panel toggles), the trackpad card that drives
@@ -475,7 +478,29 @@ class MainActivity : Activity() {
         panel.addView(buttons)
         scaleControls += scaleSeek
         for (i in 0 until buttons.childCount) scaleControls += buttons.getChildAt(i)
+
+        // Keyboard on the phone: only the adb shell user may set it (see tools/KeyboardOnPhone),
+        // so the panel offers the one-time command.
+        panel.addView(View(this).apply { setBackgroundColor(Ui.PAD_BORDER) },
+            LinearLayout.LayoutParams(MATCH, dp(1)).apply { topMargin = dp(16); bottomMargin = dp(14) })
+        panel.addView(TextView(this).apply {
+            text = "Keyboard on the phone"; setTextColor(Ui.TEXT); textSize = 15f; typeface = MEDIUM
+        })
+        panel.addView(TextView(this).apply {
+            text = "Make desktop text fields open your phone's own keyboard (Gboard…) while the " +
+                "desktop app keeps focus. Run this once on a computer with adb — Android remembers " +
+                "it for this display."
+            setTextColor(Ui.MUTED); textSize = 12f
+            setLineSpacing(0f, 1.15f); setPadding(0, dp(4), 0, dp(2))
+        })
+        panel.addView(row { addView(chip("Copy adb command") { copyKeyboardCommand() }) })
         return panel
+    }
+
+    private fun copyKeyboardCommand() {
+        getSystemService(ClipboardManager::class.java)
+            .setPrimaryClip(ClipData.newPlainText("GlassPad keyboard command", KeyboardOnPhone.COMMAND))
+        Toast.makeText(this, "Copied — paste it into a terminal on a computer with adb", Toast.LENGTH_LONG).show()
     }
 
     // ---- navigation (the desktop taskbar's back / home / recents, plus fullscreen) ----
@@ -821,7 +846,7 @@ class MainActivity : Activity() {
         titleBlock.addView(statusRow)
         bar.addView(titleBlock, LinearLayout.LayoutParams(0, WRAP, 1f))
 
-        scaleButton = iconButton(R.drawable.ic_monitor, "Desktop scale") { toggleScale() }
+        scaleButton = iconButton(R.drawable.ic_monitor, "Display settings") { toggleScale() }
         kbButton = iconButton(R.drawable.ic_keyboard, "Keyboard") { toggleKeyboard() }
         lockButton = iconButton(R.drawable.ic_lock_open, "Lock touchpad") { withService { it.setLocked(true) } }
         for (b in listOf(scaleButton, kbButton, lockButton)) {

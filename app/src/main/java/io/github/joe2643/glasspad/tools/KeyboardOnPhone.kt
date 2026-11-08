@@ -17,6 +17,10 @@ import org.lsposed.hiddenapibypass.HiddenApiBypass
  * It runs inside the GlassPad APK via app_process (no extra file to install), never in the app.
  */
 object KeyboardOnPhone {
+    /** The command the app offers to copy (the display panel). */
+    const val COMMAND = "adb shell 'CLASSPATH=\$(pm path io.github.joe2643.glasspad | cut -d: -f2) " +
+        "app_process / io.github.joe2643.glasspad.tools.KeyboardOnPhone phone'"
+
     private const val POLICY_LOCAL = 0     // WindowManager.DISPLAY_IME_POLICY_LOCAL
     private const val POLICY_FALLBACK = 1  // WindowManager.DISPLAY_IME_POLICY_FALLBACK_DISPLAY (hidden)
     private const val TYPE_EXTERNAL = 2    // Display.TYPE_EXTERNAL (hidden)
