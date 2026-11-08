@@ -14,6 +14,11 @@ command.
 > auxiliaryutils, released under the MIT License. The accessibility-based design, cursor overlay and
 > keyboard relay are theirs; GlassPad reworks the gestures and adds the features below.
 
+<p align="center">
+  <img src="docs/screenshot.png" width="640"
+       alt="GlassPad on a phone: left, the trackpad with its gesture guide; right, with the keyboard open">
+</p>
+
 ## What GlassPad adds to DeskPad
 
 - **Moving never clicks.** A tap is a tap; sliding to aim and lifting doesn't click — like Chrome
