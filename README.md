@@ -30,6 +30,8 @@ command.
 - **Back / Home / Recents buttons** that press the *desktop's* taskbar, not the phone's.
 - **Fullscreen button** — hides the taskbar for the app you're using. *(optional, adb once)*
 - **Desktop scale slider** — shrinks the oversized UI that AR glasses get. *(optional, adb once)*
+- **Your phone's own keyboard for desktop text fields** — Gboard opens on the phone, the desktop app
+  keeps focus. *(optional, adb once)*
 - A redesigned phone UI.
 
 ## Requirements
@@ -83,6 +85,18 @@ adb shell pm grant io.github.joe2643.glasspad android.permission.PACKAGE_USAGE_S
 adb shell pm grant io.github.joe2643.glasspad android.permission.WRITE_SECURE_SETTINGS
 ```
 
+**Your phone's keyboard for desktop text fields** (recommended): with the glasses or monitor
+connected, run
+
+```bash
+adb shell 'CLASSPATH=$(pm path io.github.joe2643.glasspad | cut -d: -f2) app_process / io.github.joe2643.glasspad.tools.KeyboardOnPhone phone'
+```
+
+From then on, clicking a text field on the desktop opens your phone's own keyboard (Gboard or
+whatever you use) on the phone, typing straight into the desktop app, which keeps focus. Android
+remembers this per display, so it survives reconnects. `display` instead of `phone` puts it back;
+`status` just reports.
+
 See [Privacy & permissions](#privacy--permissions) for what these allow.
 
 ## Using it
@@ -129,7 +143,12 @@ haptic tap.
 
 **Enter really submits:** in a chat box it presses Send; in an address bar or search box it goes.
 
-**Prefer your own keyboard?** Tap **Phone keyboard** above the keys. GlassPad then shows a text box
+**Best: your phone's own keyboard, directly.** After the one-time
+[keyboard command](#optional-extras-one-adb-command-each), clicking a desktop text field opens your
+phone's keyboard on the phone and you just type — Chinese input, glide, voice and autocorrect all
+work, and the desktop app keeps focus.
+
+**Without the command,** tap **Phone keyboard** above the keys. GlassPad then shows a text box
 that uses the phone's own keyboard (Gboard or whatever you use) — so Chinese input (Cangjie,
 Cantonese, pinyin…), glide typing, voice typing and autocorrect all work. Type, then **Send** (or the
 keyboard's send key) to put the text in the desktop field and press Enter there, or **Insert** to
@@ -169,6 +188,8 @@ back. While the phone keyboard is open, the phone has focus, so desktop window m
   any system service's diagnostic dump. GlassPad only reads the task list and runs the two
   desktop-mode commands, and can't send data off the phone, but grant them only if you want the
   button.
+- **The keyboard command** changes one display setting (where the keyboard opens) and grants
+  nothing to GlassPad; it runs once as the adb shell user.
 - The optional features call hidden Android APIs through
   [`hiddenapibypass`](https://github.com/LSPosed/AndroidHiddenApiBypass). They rely on Android
   internals, so an Android update can break them; GlassPad then shows the error instead of crashing.

@@ -151,6 +151,22 @@ last click (`AccessibilityNodeInfo.refresh()` says whether it's still reachable)
 fails, it clicks the last-click point on the desktop so the desktop takes focus back, then retries a
 few times. `adb logcat -s GlassPadKeys` shows which path was taken.
 
+### Keyboard on the phone, focus on the desktop (optional, adb once)
+
+Better than relaying: Android already knows how to show the IME on another display. Each display
+has an IME policy (`WindowManager.setDisplayImePolicy`): `LOCAL` shows the keyboard on that
+display, `FALLBACK_DISPLAY` on the default one — the phone — while the app on the external display
+keeps focus and a real input connection. Connected displays default to `LOCAL`, so the keyboard
+pops up on the glasses.
+
+Setting it needs `INTERNAL_SYSTEM_WINDOW` (signature, never granted to apps) and there's no `wm`
+command for it on Android 17 — but the shell user holds that permission. So
+`tools/KeyboardOnPhone` is a `main()` inside the APK that a computer runs once through
+`app_process` as shell: it finds the connected external displays (`DisplayManagerGlobal`) and calls
+`IWindowManager.setDisplayImePolicy`. WindowManager stores the policy in the display's persisted
+settings (keyed by its unique id, like the forced density), so it sticks across reconnects. Seen on
+a Pixel 9 Pro XL with VITURE glasses: the setting entry's IME field went from unset to 1.
+
 ### Enter that actually submits
 
 `ACTION_IME_ENTER` returns `true` even on an unfocused field while doing nothing — a false positive.
