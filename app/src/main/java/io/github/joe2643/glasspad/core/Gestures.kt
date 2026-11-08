@@ -66,10 +66,11 @@ data class GestureConfig(
     val swipeStartMm: Float = 6f,
     /** A three-finger swipe up that rests this long is "swipe up and hold" (recents). */
     val swipeHoldMs: Long = 300,
-    /** A finger that has stayed within this distance counts as resting (a thumb or palm)… */
+    /** A finger that has stayed within this distance past the tap timeout is resting: a tap beside
+     *  it is still a one-finger click. */
     val restMaxMoveMm: Float = 1.5f,
-    /** …once the other finger has moved this far, which makes it pointer motion, not scroll. */
-    val pointerOverRestMm: Float = 4f,
+    /** One of two fingers moving this far while the other stays put still scrolls (it lags or rests). */
+    val scrollLeadMm: Float = 4f,
     /** Pause in pointer motion after the finger count drops, so the cursor doesn't lurch. */
     val fingerSwitchMs: Long = 100,
     /** Pointer speed setting in [-1, 1]; 0.5 ≈ the old fixed 1.4× gain at normal speed. */
@@ -89,14 +90,19 @@ data class GestureConfig(
  *  - **Tap-and-drag.** A touch landing within [GestureConfig.dragWindowMs] of a one-finger tap that
  *    then moves past the slop (or is held) presses and drags; lifting it again quickly instead is a
  *    second click (double-click).
- *  - **Two fingers** are judged from where they were when they met. Their distance changing by
+ *  - **Two fingers never move the pointer** (Chrome Remote Desktop's rule): it's a scroll or a pinch,
+ *    whenever the second finger lands — even if the first was already moving the pointer or had
+ *    been resting. They are judged from where they were when they met. Their distance changing by
  *    [GestureConfig.pinchStartMm] and by more than they drift together is a **pinch** — so one finger
- *    may stay put (Chrome Remote Desktop's rule) and the hand may drift. Moving together with
- *    little change in distance is a **scroll**. One still finger and one moving sideways (not toward
- *    or away from it) is a resting thumb plus the pointer. Within [GestureConfig.pinchSwitchMs] a
- *    scroll, or a thumb that starts moving, can still become a pinch (libinput, ChromeOS gestures).
- *  - **Thumbs and palms.** A finger that has rested motionless past the tap timeout when another
- *    lands, or a finger that lands while the pointer is already moving or dragging, is ignored.
+ *    may stay put and the hand may drift. Moving together with little change in distance is a
+ *    **scroll**, and so is one finger moving on while the other lags or rests. Within
+ *    [GestureConfig.pinchSwitchMs] a scroll can still become a pinch (libinput, ChromeOS gestures).
+ *  - **After a scroll or pinch** the pointer stays still until every finger has lifted, so lifting
+ *    the fingers one at a time never nudges the cursor (Chrome Remote Desktop). Putting a second
+ *    finger back down resumes the scroll.
+ *  - **Resting fingers.** A finger that rested motionless past the tap timeout before another lands
+ *    doesn't count toward a tap: tapping beside it is a left click, not a right click. A finger that
+ *    lands during a drag, or a third finger during a scroll or pinch, is ignored.
  *  - **Lifting one finger** never ends the gesture for the others; motion pauses briefly
  *    ([GestureConfig.fingerSwitchMs]) and continues from the remaining finger without a jump.
  *  - **Three fingers** landing together make a navigation gesture, as on an Android touchpad:
@@ -116,7 +122,8 @@ class GestureRecognizer(private val config: GestureConfig = GestureConfig()) {
         var dx = 0f
         var dy = 0f
         var travelMm = 0f
-        var thumb = false
+        var thumb = false   // ignored entirely (lands during a drag, or a third finger mid-scroll)
+        var rested = false  // was resting when the next finger landed: moves, but never taps
         // Where this finger was when it was last paired with another: two-finger gestures measure from here.
         var anchorX = startX
         var anchorY = startY
@@ -138,6 +145,7 @@ class GestureRecognizer(private val config: GestureConfig = GestureConfig()) {
     private var pairSpan = 0f            // finger distance when the current pair met (px)
     private var pairStart = NO_TIME      // when it met; NO_TIME = no pair can still become a pinch
     private var lastPinchScale = 1f
+    private var pointerLocked = false    // a scroll or pinch happened: no pointer motion until all lift
     // Three-finger gesture state.
     private var trio = false             // three fingers have been down together this gesture
     private var swipe = Swipe.NONE
@@ -176,26 +184,32 @@ class GestureRecognizer(private val config: GestureConfig = GestureConfig()) {
             fingers.isEmpty() -> startGesture(touch, now, allowDrag = true)
             mode == Mode.DRAG -> touch.thumb = true
             fingers.size == 1 && isResting(fingers[0], now) -> {
-                // The finger already down has been resting: it's the thumb holding the phone. It
-                // never clicks or moves the pointer, but may still join a pinch.
-                val thumb = fingers[0]
-                thumb.thumb = true
+                // The finger already down has been resting (say, a thumb holding the phone). Taps
+                // count only the new finger, but the two still scroll or pinch together.
+                val resting = fingers[0]
                 startGesture(touch, now, allowDrag = false)
-                pair(thumb, touch, now)
+                resting.rested = true
+                pair(resting, touch, now)
             }
-            mode != Mode.UNDECIDED -> {
-                touch.thumb = true // pointer already moving / scrolling
-                if (mode == Mode.POINTER && fingers.size == 1) pair(fingers[0], touch, now)
+            fingers.size == 1 && mode == Mode.POINTER -> {
+                // A second finger joins a moving pointer: two fingers scroll or pinch, never point.
+                mode = Mode.UNDECIDED
+                tapCandidate = false
+                pair(fingers[0], touch, now)
             }
+            mode != Mode.UNDECIDED -> touch.thumb = true // a third finger mid-scroll/pinch
             else -> {
                 // Another finger joining a fresh gesture: a multi-finger tap, a scroll or a pinch.
-                val count = fingers.size + 1
+                // With two other fingers down, a resting one is just a thumb.
+                fingers.filter { it.rested }.forEach { it.thumb = true }
+                val active = fingers.filter { !it.thumb }
+                val count = active.size + 1
                 tapFingers = max(tapFingers, count)
                 if (count > 3) tapCandidate = false
                 lastFingerDown = now // libinput restarts the tap timer on every finger down
                 dragCandidate = false
-                if (count == 2) pair(fingers[0], touch, now)
-                if (count == 3) startTrio(fingers + touch)
+                if (count == 2) pair(active[0], touch, now)
+                if (count == 3) startTrio(active + touch)
             }
         }
     }
@@ -226,6 +240,7 @@ class GestureRecognizer(private val config: GestureConfig = GestureConfig()) {
         dragCandidate = allowDrag && lastTapUp != NO_TAP && now - lastTapUp <= config.dragWindowMs
         lastTapUp = NO_TAP
         pairStart = NO_TIME
+        pointerLocked = false
         pauseUntil = Long.MIN_VALUE
         heldX = 0f
         heldY = 0f
@@ -249,27 +264,12 @@ class GestureRecognizer(private val config: GestureConfig = GestureConfig()) {
         if (!any) return
         val fingers = fingers()
         if (fingers.isEmpty()) return
-        if (fingers.any { it.travelMm > config.tapMaxMoveMm } || now - lastFingerDown > config.tapTimeoutMs) {
+        if (fingers.any { !it.rested && it.travelMm > config.tapMaxMoveMm } || now - lastFingerDown > config.tapTimeoutMs) {
             tapCandidate = false
         }
         if (trio) { threeFingerMove(fingers, now, out); return }
-        if (fingers.size == 1 && (mode == Mode.UNDECIDED || mode == Mode.POINTER)) {
-            val thumb = thumbJoiningPinch(fingers[0], now)
-            if (thumb != null) {
-                thumb.thumb = false
-                startPinch(fingers[0], thumb, out)
-                return
-            }
-        }
         if (fingers.size >= 2) twoFingerMove(fingers[0], fingers[1], now, out)
         else oneFingerMove(fingers[0], now, out)
-    }
-
-    /** A thumb paired with [finger] that has started moving with it as a pinch, if any. */
-    private fun thumbJoiningPinch(finger: Touch, now: Long): Touch? {
-        if (!inPinchWindow(now)) return null
-        val thumb = touches.values.firstOrNull { it.thumb } ?: return null
-        return thumb.takeIf { moved(it) >= config.restMaxMoveMm && isPinch(finger, it) }
     }
 
     private fun inPinchWindow(now: Long) = pairStart != NO_TIME && now - pairStart <= config.pinchSwitchMs
@@ -328,6 +328,7 @@ class GestureRecognizer(private val config: GestureConfig = GestureConfig()) {
     }
 
     private fun oneFingerMove(f: Touch, now: Long, out: MutableList<GestureAction>) {
+        if (pointerLocked) return // the rest of a scroll or pinch
         if (f.id != primaryId || now < pauseUntil) {
             // A different finger now drives the pointer, or we're in the post-lift pause:
             // re-anchor at the current position so nothing jumps.
@@ -406,14 +407,15 @@ class GestureRecognizer(private val config: GestureConfig = GestureConfig()) {
         val sameWay = (a.x - a.anchorX) * (b.x - b.anchorX) + (a.y - a.anchorY) * (b.y - b.anchorY) > 0f
         val together = ma >= config.scrollStartMm && mb >= config.scrollStartMm && spread(a, b) < 0.5f * drift(a, b)
         val certain = ma >= config.gestureCertainMm || mb >= config.gestureCertainMm
+        val lagging = (ma >= config.scrollLeadMm && mb < config.restMaxMoveMm) ||
+            (mb >= config.scrollLeadMm && ma < config.restMaxMoveMm)
         when {
-            together || (certain && sameWay) -> {
+            together || (certain && sameWay) || lagging -> {
                 mode = Mode.SCROLL
                 tapCandidate = false
+                pointerLocked = true
                 out += GestureAction.Scroll((a.dx + b.dx) / 2f, (a.dy + b.dy) / 2f)
             }
-            ma >= config.pointerOverRestMm && mb < config.restMaxMoveMm -> pointerFrom(a, thumb = b, now)
-            mb >= config.pointerOverRestMm && ma < config.restMaxMoveMm -> pointerFrom(b, thumb = a, now)
             ma >= config.gestureCertainMm && mb >= config.gestureCertainMm -> startPinch(a, b, out) // opposite ways
         }
     }
@@ -421,6 +423,7 @@ class GestureRecognizer(private val config: GestureConfig = GestureConfig()) {
     private fun startPinch(a: Touch, b: Touch, out: MutableList<GestureAction>) {
         mode = Mode.PINCH
         tapCandidate = false
+        pointerLocked = true
         lastPinchScale = 1f
         out += GestureAction.PinchStart
         pinchUpdate(a, b, out)
@@ -433,14 +436,6 @@ class GestureRecognizer(private val config: GestureConfig = GestureConfig()) {
         if (abs(scale - lastPinchScale) < PINCH_STEP) return
         out += GestureAction.Pinch(scale)
         lastPinchScale = scale
-    }
-
-    private fun pointerFrom(mover: Touch, thumb: Touch, now: Long) {
-        thumb.thumb = true
-        mode = Mode.POINTER
-        tapCandidate = false
-        primaryId = mover.id
-        accel.reset(mover.x, mover.y, now)
     }
 
     // ---- UP / CANCEL ----
@@ -462,6 +457,11 @@ class GestureRecognizer(private val config: GestureConfig = GestureConfig()) {
 
         val remaining = fingers()
         if (remaining.isNotEmpty()) {
+            // Tapped beside a resting finger: a click by the tapping fingers alone.
+            if (remaining.all { it.rested } && tapCandidate && now - lastFingerDown <= config.tapTimeoutMs) {
+                out += if (tapFingers >= 2) GestureAction.RightClick else GestureAction.LeftClick
+                tapCandidate = false
+            }
             // Fewer fingers, same gesture: carry on from a remaining finger after a short pause.
             if (mode == Mode.SCROLL || mode == Mode.PINCH) {
                 if (mode == Mode.PINCH) out += GestureAction.PinchEnd
@@ -512,6 +512,7 @@ class GestureRecognizer(private val config: GestureConfig = GestureConfig()) {
         pairSpan = 0f
         pairStart = NO_TIME
         lastPinchScale = 1f
+        pointerLocked = false
         trio = false
         swipe = Swipe.NONE
         swipeDone = false

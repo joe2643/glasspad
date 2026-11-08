@@ -29,7 +29,7 @@ The code splits along a hard boundary so the interesting logic is testable witho
 
 ```
 io.github.joe2643.glasspad
-├── core/                     ← pure Kotlin. NO android.* imports. 86 JUnit tests.
+├── core/                     ← pure Kotlin. NO android.* imports. 89 JUnit tests.
 │   ├── Gestures.kt           PadFrame, PadPointer, GestureAction, GestureConfig, GestureRecognizer
 │   ├── PointerAccel.kt       speed-based pointer acceleration (libinput's touchpad curve)
 │   ├── DesktopScale.kt       desktop-scale slider steps (dpi) and the workspace they leave
@@ -78,14 +78,18 @@ TouchpadView          GestureRecognizer        InputPipeline           Accessibi
    `Move`, `LeftClick`, `RightClick`, `Scroll`, `DragStart/DragMove/DragEnd`,
    `PinchStart/Pinch/PinchEnd`, `Navigate`. Its rules follow libinput's touchpad tap state machine: thresholds
    are physical millimetres (1.3 mm tap slop, 180 ms tap and tap-and-drag windows), motion is held
-   back while a touch could still be a tap, a resting thumb or palm is ignored, and cancel never
-   clicks. `Move`/`DragMove` deltas are already accelerated by `PointerAccel`.
+   back while a touch could still be a tap, a finger that was resting before another landed never
+   counts toward a tap, and cancel never clicks. `Move`/`DragMove` deltas are already accelerated by `PointerAccel`.
 
-   Two fingers are judged from where they were when they met: a change in their distance of
-   2.5 mm that exceeds how far they drifted together is a pinch (so one finger may stay still, and
-   the hand may drift); moving together is a scroll; one still finger plus one moving sideways is a
-   resting thumb plus the pointer. For 300 ms a scroll, or a resting thumb that starts moving, can
-   still become a pinch. This is synthesised from ChromeOS gestures (`immediate_interpreter.cc`),
+   **Two fingers never move the pointer** — Chrome Remote Desktop's rule (`TouchInputHandler`
+   only moves the cursor while exactly one pointer is down). Whenever a second finger lands, even
+   on a pointer that's already moving or beside a finger that was resting, the pair is judged from
+   where they were when they met: a change in their distance of 2.5 mm that exceeds how far they
+   drifted together is a pinch (so one finger may stay still, and the hand may drift); moving
+   together is a scroll, and so is one finger moving 4 mm on while the other lags or rests. For
+   300 ms a scroll can still become a pinch. After a scroll or pinch the pointer stays locked until
+   every finger has lifted (CRD's `mSuppressCursorMovement`), so lifting the fingers one at a time
+   never nudges the cursor; a second finger put back down resumes the scroll. This is synthesised from ChromeOS gestures (`immediate_interpreter.cc`),
    libinput (`evdev-mt-touchpad-gestures.c`) and Chrome Remote Desktop (`SwipePinchDetector`).
    `Pinch.scale` is cumulative (distance ÷ distance when the fingers met).
 

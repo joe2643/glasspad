@@ -155,22 +155,57 @@ class GestureRecognizerTest {
         assertTrue(pad.out.none { it in clicks })
     }
 
-    @Test fun oneStillFingerAndOneSidewaysFingerMovesThePointer() {
-        // Moving across the line between the fingers barely changes their distance: not a pinch.
+    @Test fun twoFingersNeverMoveThePointer() {
+        // Chrome Remote Desktop's rule: with two fingers down it's a scroll or a pinch, never the
+        // pointer — even when one finger stays put and the other moves across the line between them.
         val pad = Pad().down(0, 100f, 500f, 0).down(1, 300f, 500f, 10)
             .slide(0f, 60f, 20, 100, 1).up(1, 130).up(0, 140)
-        assertTrue(pad.out.moves().isNotEmpty())
-        assertFalse(pad.out.any { it is GestureAction.Scroll || it is GestureAction.PinchStart })
+        assertTrue(pad.out.moves().isEmpty())
+        assertFalse(pad.out.any { it is GestureAction.PinchStart })
         assertTrue(pad.out.none { it in clicks })
     }
 
-    @Test fun liftingOneScrollFingerDoesNotMakeTheCursorJump() {
+    @Test fun aScrollWhereOneFingerLagsStillScrolls() {
+        // The leading finger is 4 mm ahead before the other one starts: still a scroll, not a pointer.
+        val pad = Pad().down(0, 100f, 500f, 0).down(1, 300f, 500f, 10)
+            .slide(0f, 45f, 20, 60, 1)
+            .slide(0f, 60f, 80, 100, 0, 1)
+        assertTrue(pad.out.any { it is GestureAction.Scroll })
+        assertTrue(pad.out.moves().isEmpty())
+    }
+
+    @Test fun aFingerThatRestedBeforeTheSecondLandsStillScrolls() {
+        // Put one finger down, then the other a moment later, then scroll.
+        val pad = Pad().down(0, 100f, 500f, 0).down(1, 300f, 500f, 400)
+            .slide(0f, 60f, 410, 120, 0, 1).up(0, 540).up(1, 550)
+        assertTrue(pad.out.any { it is GestureAction.Scroll })
+        assertTrue(pad.out.moves().isEmpty())
+    }
+
+    @Test fun secondFingerLandingWhileThePointerMovesTurnsIntoAScroll() {
+        // The scroll started before the second finger touched: the pointer stops, the scroll takes over.
+        val pad = Pad().down(0, 100f, 500f, 0).slide(0f, 20f, 0, 30, 0, steps = 3)
+        val movesBefore = pad.out.moves().size
+        pad.down(1, 300f, 520f, 40).slide(0f, 60f, 50, 100, 0, 1)
+        assertTrue(pad.out.any { it is GestureAction.Scroll })
+        assertEquals(movesBefore, pad.out.moves().size)
+    }
+
+    @Test fun afterAScrollTheLastFingerNeverMovesTheCursor() {
+        // Chrome Remote Desktop keeps the pointer still until every finger has lifted.
         val pad = Pad().down(0, 100f, 100f, 0).down(1, 400f, 100f, 10)
             .slide(0f, 60f, 20, 100, 0, 1)
             .up(0, 130)
-            .move(1, 400f, 165f, 160)   // inside the 100 ms switch pause: ignored
-            .move(1, 403f, 165f, 260)   // after it: a small, local move
-        assertTrue(pad.out.moves().all { hypot(it.dx, it.dy) < 40f })
+            .slide(0f, 80f, 140, 200, 1)
+        assertTrue(pad.out.moves().isEmpty())
+    }
+
+    @Test fun puttingTheSecondFingerBackResumesTheScroll() {
+        val pad = Pad().down(0, 100f, 100f, 0).down(1, 400f, 100f, 10)
+            .slide(0f, 60f, 20, 100, 0, 1).up(0, 130).clear()
+            .down(0, 100f, 200f, 200).slide(0f, 60f, 210, 100, 0, 1)
+        assertTrue(pad.out.any { it is GestureAction.Scroll })
+        assertTrue(pad.out.moves().isEmpty())
     }
 
     // ---- pinch ----
@@ -193,13 +228,12 @@ class GestureRecognizerTest {
         assertEquals(200f / 400f, pad.out.zoom(), 1e-3f)
     }
 
-    @Test fun pinchEndsWhenAFingerLiftsAndTheOtherMovesThePointer() {
+    @Test fun pinchEndsWhenAFingerLiftsAndTheOtherStaysStill() {
         val pad = Pad().down(0, 300f, 500f, 0).down(1, 500f, 500f, 10)
             .pinch(120f, 20, 120, 0, 1).up(0, 150)
         assertEquals(GestureAction.PinchEnd, pad.out.last())
         pad.clear().move(1, 600f, 500f, 300).move(1, 640f, 500f, 320)
-        assertTrue(pad.out.none { it is GestureAction.Pinch })
-        assertTrue(pad.out.moves().isNotEmpty())
+        assertTrue(pad.out.isEmpty())
     }
 
     @Test fun movingOneFingerAwayFromAStillOnePinches() {
@@ -223,8 +257,8 @@ class GestureRecognizerTest {
         assertTrue(pad.out.none { it is GestureAction.Scroll })
     }
 
-    @Test fun aRestingThumbCanJoinAPinch() {
-        // The first finger rested past the tap timeout (a thumb), but moves with the second one.
+    @Test fun aFingerThatRestedFirstCanPinch() {
+        // The first finger rested past the tap timeout, then pinches with the second one.
         val pad = Pad().down(0, 300f, 500f, 0).down(1, 500f, 500f, 500)
             .pinch(120f, 510, 120, 0, 1).up(0, 650).up(1, 660)
         assertTrue(pad.out.contains(GestureAction.PinchStart))
@@ -301,18 +335,11 @@ class GestureRecognizerTest {
         assertEquals(listOf(GestureAction.LeftClick), pad.out)
     }
 
-    @Test fun restingThumbDoesNotTurnASlideIntoAScroll() {
-        val pad = Pad().down(0, 50f, 1500f, 0)
-            .down(1, 300f, 600f, 500).slide(60f, 0f, 500, 100, 1).up(1, 620)
-        assertTrue(pad.out.moves().isNotEmpty())
-        assertFalse(pad.out.any { it is GestureAction.Scroll })
-    }
-
-    @Test fun fingerLandingWhileTheCursorMovesIsIgnored() {
+    @Test fun aBriefSecondTouchOnlyPausesThePointer() {
         val pad = Pad().down(0, 100f, 100f, 0).slide(40f, 0f, 0, 80, 0)
         val movesBefore = pad.out.moves().size
         pad.down(1, 300f, 800f, 90).up(1, 120)
-            .slide(40f, 0f, 130, 70, 0).up(0, 210)
+            .slide(40f, 0f, 230, 70, 0).up(0, 310)
         assertTrue(pad.out.moves().size > movesBefore)
         assertTrue(pad.out.none { it in clicks || it is GestureAction.Scroll })
     }

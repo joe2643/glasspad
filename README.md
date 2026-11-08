@@ -102,7 +102,9 @@ See [Privacy & permissions](#privacy--permissions) for what these allow.
 | Three-finger swipe up and hold | Recent apps |
 | Three-finger tap | Recent apps |
 
-A three-finger swipe down is left alone, since Android uses it for notifications. The trackpad shows
+As in Chrome Remote Desktop, two fingers never move the cursor: once a second finger touches,
+it's a scroll or a pinch, and the cursor stays put until you lift every finger. A three-finger
+swipe down is left alone, since Android uses it for notifications. The trackpad shows
 a short guide until you first touch it.
 
 ### Header buttons
@@ -163,7 +165,7 @@ haptic tap.
 ## For developers
 
 A framework-free `core/` package (gestures, pointer acceleration, pipeline, cursor and dump parsing —
-**86 JUnit tests**, no emulator needed) with a thin Android layer on top. See
+**89 JUnit tests**, no emulator needed) with a thin Android layer on top. See
 [ARCHITECTURE.md](ARCHITECTURE.md) for the design: the gesture recognizer, focus handling, how the
 desktop's taskbar and fullscreen are driven, and the threading model.
 
