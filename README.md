@@ -28,7 +28,8 @@ No mouse, no dongle, no PC, no developer setup. You enable it once and it just w
 - A USB-C **DisplayPort** cable and a monitor (or a USB-C hub with HDMI).
 - The DeskPad app (`DeskPad-release.apk`).
 
-That's it. **You do not need adb, a rooted phone, Shizuku, or a computer.**
+That's it. **You do not need adb, a rooted phone, Shizuku, or a computer.** (The exceptions are the
+optional desktop-scale slider and fullscreen button — see below.)
 
 ---
 
@@ -71,7 +72,15 @@ the service is on, both the trackpad and keyboard work.
 | Tap | Left click |
 | Two-finger tap | Right click |
 | Two-finger slide | Scroll |
+| Two fingers apart / together | **Pinch to zoom**, centred on the cursor (one finger may stay still) |
 | Tap, then press again and slide | **Grab and drag** (move a window, select text, drag a file) |
+| Three-finger swipe left or right | Back |
+| Three-finger swipe up | Home |
+| Three-finger swipe up and hold | Recent apps |
+| Three-finger tap | Recent apps |
+
+The three-finger gestures are Android's own touchpad navigation gestures (a three-finger swipe down
+is left alone — Android keeps it for notifications).
 
 The drag follows your finger live — press, then keep sliding, and lift to drop.
 
@@ -88,6 +97,37 @@ The drag follows your finger live — press, then keep sliding, and lift to drop
 
 **Enter actually sends.** In a chat box it presses Send; in a browser address bar or a search box it
 submits (Go / Search) — just like a real keyboard's Enter.
+
+### Back, Home, Recents
+
+The **◁ ○ □** row at the bottom of the phone works the desktop: it presses the desktop taskbar's own
+Back, Home and Recents buttons, so you don't have to aim the cursor at them.
+
+### Fullscreen (optional, needs a PC once)
+
+**⛶** (next to ◁ ○ □) switches the app you're using on the desktop to true fullscreen — the taskbar
+hides, and apps that go immersive (video, readers) hide the status bar too. Tap it again to put the
+app back in a desktop window. Needs a one-time grant:
+
+```bash
+adb shell pm grant com.example.deskpad android.permission.DUMP
+adb shell pm grant com.example.deskpad android.permission.PACKAGE_USAGE_STATS
+```
+
+### Desktop scale (optional, needs a PC once)
+
+If the desktop's UI looks oversized — the taskbar and title bars eat the screen (common with AR
+glasses such as VITURE, which report a tiny physical size) — tap **🖥** in the top bar. Drag the
+slider (or tap **smaller** / **bigger**) to fit more on the desktop; **reset** returns to the
+display's default. The setting is remembered per display.
+
+This one feature needs a permission only a computer can grant. Once, with the phone on adb:
+
+```bash
+adb shell pm grant com.example.deskpad android.permission.WRITE_SECURE_SETTINGS
+```
+
+Until then the panel just shows that command; everything else works without it.
 
 ### Lock (so nothing happens by accident)
 
@@ -127,9 +167,10 @@ DeskPad is deliberately minimal:
 ## For developers
 
 Project layout: a framework-free `core/` package (pure Kotlin gesture/pipeline/cursor logic, covered
-by **33 JUnit unit tests**) with a thin Android layer on top — an `AccessibilityService` that
+by **86 JUnit unit tests**) with a thin Android layer on top — an `AccessibilityService` that
 dispatches gestures and draws the cursor, and an Activity hosting the trackpad + on-screen keyboard.
-No third-party runtime dependencies.
+One third-party runtime dependency: [`hiddenapibypass`](https://github.com/LSPosed/AndroidHiddenApiBypass),
+used only by the optional desktop-scale slider and fullscreen button.
 
 ```bash
 export ANDROID_HOME=/path/to/android-sdk

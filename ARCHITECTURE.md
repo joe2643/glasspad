@@ -26,8 +26,12 @@ The code splits along a hard boundary so the interesting logic is testable witho
 
 ```
 com.example.deskpad
-├── core/                     ← pure Kotlin. NO android.* imports. 33 JUnit tests.
-│   ├── Gestures.kt           PadFrame, PadPhase, GestureAction, GestureConfig, GestureRecognizer
+├── core/                     ← pure Kotlin. NO android.* imports. 86 JUnit tests.
+│   ├── Gestures.kt           PadFrame, PadPointer, GestureAction, GestureConfig, GestureRecognizer
+│   ├── PointerAccel.kt       speed-based pointer acceleration (libinput's touchpad curve)
+│   ├── DesktopScale.kt       desktop-scale slider steps (dpi) and the workspace they leave
+│   ├── WmShell.kt            SystemUI desktop-mode commands and their output
+│   ├── ActivityDump.kt       finds the front app task on a display in `dumpsys activity`
 │   ├── GestureRecognizer     touch-frame stream → semantic GestureActions
 │   ├── InputPipeline.kt      GestureAction → InputSink calls, gated by the lock
 │   ├── InputSink.kt          the interface the pipeline drives (implemented by the Android layer)
@@ -43,7 +47,9 @@ com.example.deskpad
     ├── CursorOverlay.kt       the overlay window on the external display
     ├── CursorView.kt          draws the cursor
     ├── TouchpadView.kt        captures phone touches → PadFrames
-    ├── MainActivity.kt        UI: full-bleed trackpad, on-screen keyboard, lock button
+    ├── MainActivity.kt        UI: trackpad, keyboard, lock, desktop scale, back/home/recents row
+    ├── DisplayDensity.kt      optional: sets the external display's density (adb-granted)
+    ├── DesktopShell.kt        optional: fullscreen via ActivityManager dump → WMShell (adb-granted)
     └── DeskPadIme.kt          a bundled IME (not on the main path; see "Keyboard")
 ```
 
@@ -63,9 +69,28 @@ TouchpadView          GestureRecognizer        InputPipeline           Accessibi
 ```
 
 1. **`TouchpadView`** turns each `MotionEvent` into a framework-free `PadFrame`
-   (phase, pointer count, x, y, time).
+   (phase, every pointer with its stable id and position, time).
 2. **`GestureRecognizer`** consumes the frame stream and emits semantic `GestureAction`s:
-   `Move`, `LeftClick`, `RightClick`, `Scroll`, `DragStart/DragMove/DragEnd`.
+   `Move`, `LeftClick`, `RightClick`, `Scroll`, `DragStart/DragMove/DragEnd`,
+   `PinchStart/Pinch/PinchEnd`, `Navigate`. Its rules follow libinput's touchpad tap state machine: thresholds
+   are physical millimetres (1.3 mm tap slop, 180 ms tap and tap-and-drag windows), motion is held
+   back while a touch could still be a tap, a resting thumb or palm is ignored, and cancel never
+   clicks. `Move`/`DragMove` deltas are already accelerated by `PointerAccel`.
+
+   Two fingers are judged from where they were when they met: a change in their distance of
+   2.5 mm that exceeds how far they drifted together is a pinch (so one finger may stay still, and
+   the hand may drift); moving together is a scroll; one still finger plus one moving sideways is a
+   resting thumb plus the pointer. For 300 ms a scroll, or a resting thumb that starts moving, can
+   still become a pinch. This is synthesised from ChromeOS gestures (`immediate_interpreter.cc`),
+   libinput (`evdev-mt-touchpad-gestures.c`) and Chrome Remote Desktop (`SwipePinchDetector`).
+   `Pinch.scale` is cumulative (distance ÷ distance when the fingers met).
+
+   Three fingers landing together are a navigation gesture (`Navigate`), mirroring Android's own
+   touchpad gestures: their mean motion past 6 mm decides it — sideways → back at once, up → home
+   on lift or recents once it rests 300 ms, down → nothing (notifications) — and a three-finger
+   tap is recents. From then until every finger lifts, nothing moves, scrolls or pinches. The sink
+   hands `Navigate` to the service, which clicks the desktop taskbar's button (see "Back / home /
+   recents").
 3. **`InputPipeline`** translates each action into `InputSink` calls, advancing the
    `CursorController` and **gating everything through `LockController`** (locked ⇒ no-op).
 4. **`AccessibilityInputSink`** (the sink) performs the real work: it repositions the
@@ -76,9 +101,12 @@ The keyboard is a parallel path: `MainActivity`'s on-screen keys call methods on
 
 ## Threading
 
-Everything runs on the **main thread**. Touch events and `DisplayManager` callbacks are delivered
+Input runs on the **main thread**. Touch events and `DisplayManager` callbacks are delivered
 there, and `AccessibilityService.dispatchGesture` expects to be called there, so `CursorController`
-and the sink's gesture state are only ever touched from one thread — no locks. Gesture completion
+and the sink's gesture state are only ever touched from one thread — no locks. The exception is
+**window queries** (`getWindowsOnAllDisplays`, node trees, dumps): the keyboard, nav row and
+fullscreen run on one worker thread in `DeskPadA11yService`, which also owns the keyboard's text
+buffer, because the system can take seconds to answer (see "Focus"). Gesture completion
 callbacks (`GestureResultCallback`) also fire on the main thread, which is what lets the scroll and
 drag state machines below stay lock-free.
 
@@ -122,6 +150,15 @@ next is dispatched from the previous one's completion callback); a held-still fi
 zero-drift hold segment to keep the touch alive; release dispatches a final `willContinue = false`
 segment. The result is a touch that tracks the finger in real time.
 
+### Pinch: two continued strokes, sized for the app
+
+The sink pinches with the drag's technique on two strokes mirrored around the cursor, laid along
+whichever axis has more room. Apps zoom with `ScaleGestureDetector`, which stops scaling once the
+fingers are closer than `config_minScalingSpan` (27 mm, in the *display's* dpi — 324 px on VITURE
+glasses that report 305 dpi). So the injected distance never drops below 30 mm, starts at the
+geometric mean of that and the widest spread that fits (equal room to zoom in and out), and is
+start × the phone's cumulative scale.
+
 ### Scroll without overlap
 
 Firing a swipe per touch frame makes gestures overlap and race (inconsistent, unresponsive). The
@@ -135,6 +172,67 @@ There is no OS mouse pointer on the desktop, so DeskPad draws its own. `CursorOv
 `CursorView` paints the pointer. This needs no "draw over other apps" permission. `CursorController`
 keeps the position and must **preserve it across display changes** (don't re-center on every
 `onDisplayChanged`).
+
+### Focus: only while DeskPad is in front
+
+Android keeps one top-focused display (this Pixel has no per-display focus), and a touch on a
+focusable window moves it there. So every touch on DeskPad used to un-focus the app on the desktop
+(its caption greyed out, keys stopped reaching it). A `FLAG_NOT_FOCUSABLE` window avoids that —
+WindowManager doesn't move focus to a display whose touched window can't receive keys.
+
+But it must not be permanent. When the phone is the top-focused display (you just opened DeskPad)
+and DeskPad, its top activity, can't take focus, the system has **no focused window at all**:
+accessibility then won't compute windows, so every `getWindowsOnAllDisplays` waits out a 5 s timeout
+per display, and key events to the phone ANR ("Application does not have a focused window").
+Measured on a Pixel 9 Pro XL, Android 17: 10 003 ms with the flag, 7 ms without.
+
+So `MainActivity.onTopResumedActivityChanged` makes the window focusable exactly while DeskPad is
+the top resumed activity, and non-focusable once focus moves to the desktop (your first click
+there). From then on trackpad touches leave focus on the desktop — verified: after a click on the
+desktop, sliding on the phone keeps `mTopFocusedDisplayId` on the external display.
+
+Related: accessibility only reports the windows of the **top-focused** display. The keyboard and the
+◁ ○ □ row read the desktop's windows, so they work once the desktop has focus; the ⛶ button doesn't
+use accessibility at all (see below). All window queries run on the service's worker thread, so a
+slow answer can never freeze the UI.
+
+### Back / home / recents on the desktop
+
+`performGlobalAction(BACK/HOME/RECENTS)` acts on the phone's own display, never the external one.
+So the nav row clicks the **desktop taskbar's own buttons** instead: it finds the node whose view id
+ends in `:id/back`, `:id/home` or `:id/recent_apps` among the external display's `TYPE_SYSTEM`
+windows (never app windows) and performs `ACTION_CLICK`. That needs `flagReportViewIds`. If the
+launcher renames them, `adb logcat -s DeskPadNav` lists what the taskbar exposes. With no external
+display, the row falls back to the global actions.
+
+### Desktop scale (optional, adb-granted)
+
+Some displays report a tiny physical size — VITURE glasses claim ~305 dpi, so Android picks 416 dpi
+and a 1920×1200 panel lays out like a 738×462 dp phone, with an oversized taskbar. The 🖥 panel sets
+the display's density like `wm density <dpi> -d <id>`; WindowManager stores it per display, so it
+survives reconnects.
+
+This is the one feature beyond the accessibility service: it needs `WRITE_SECURE_SETTINGS`, granted
+once with `adb shell pm grant com.example.deskpad android.permission.WRITE_SECURE_SETTINGS`. Without
+the grant the panel shows that command and everything else works as before. `DisplayDensity` calls
+`IWindowManager.setForcedDisplayDensityForUser` with the app's own user id, after exempting
+`IWindowManager` from hidden-API checks in this process (the `hiddenapibypass` library). Its KDoc
+records the simpler routes that fail on Android 17 and why.
+
+### Fullscreen (optional, adb-granted)
+
+A desktop window keeps the taskbar on screen even when maximized. A **fullscreen task** doesn't: the
+taskbar stashes, and an app that asks for immersive mode hides the status bar too. SystemUI's
+window-manager shell can move a task out of its desk into fullscreen and back
+(`desktopmode moveTaskOutOfDesk <task>` / `moveTaskToDesk <task> <desk>`). That needs
+`MANAGE_ACTIVITY_TASKS` (`signature|recents`, not grantable) — but SystemUI holds it, and its shell
+commands arrive through ActivityManager's dump, which only requires `DUMP` and
+`PACKAGE_USAGE_STATS`. Both are adb-grantable once.
+
+`DesktopShell` calls `IBinder.dump` on the activity service: `activities` to find the desktop's front
+app task and its windowing mode (`ActivityDump`), then the WMShell command (`WmShell`). The ⛶
+button toggles: a fullscreen task goes back into the display's desk, a desk window goes fullscreen.
+`adb logcat -s DeskPadShell` shows each step.
 
 ## Safety: the lock
 
@@ -152,8 +250,10 @@ key events); it is inert unless explicitly selected as the system keyboard.
 
 ## Permissions summary
 
-- **AccessibilityService** — the only meaningful permission; scoped to `canPerformGestures`,
-  `canRetrieveWindowContent`, and `flagRetrieveInteractiveWindows`, observing **no** accessibility
-  events.
+- **AccessibilityService** — the only required permission; scoped to `canPerformGestures`,
+  `canRetrieveWindowContent`, `flagRetrieveInteractiveWindows`, and `flagReportViewIds` (to find the
+  taskbar's nav buttons), observing **no** accessibility events.
+- **`WRITE_SECURE_SETTINGS`** — optional, adb-granted once, used only by the desktop-scale panel.
+- **`DUMP`, `PACKAGE_USAGE_STATS`** — optional, adb-granted once, used only by the ⛶ button.
 - **No** internet, foreground service, notifications, `SYSTEM_ALERT_WINDOW`, root, or Shizuku.
 - The service and IME exports are gated by their system-only `BIND_*` signature permissions.
