@@ -5,6 +5,7 @@ import android.content.Intent
 import android.graphics.Color
 import android.graphics.Typeface
 import android.graphics.drawable.GradientDrawable
+import android.hardware.display.DisplayManager
 import android.os.Bundle
 import android.os.Handler
 import android.os.Looper
@@ -19,8 +20,11 @@ import android.view.accessibility.AccessibilityNodeInfo
 import android.widget.Button
 import android.widget.FrameLayout
 import android.widget.LinearLayout
+import android.widget.SeekBar
 import android.widget.TextView
 import android.widget.Toast
+import com.example.deskpad.core.DesktopScale
+import com.example.deskpad.core.DisplayInfo
 
 /**
  * Option A — full-bleed trackpad. Touches drive [DeskPadA11yService] (cursor + gestures on the
@@ -43,6 +47,11 @@ class MainActivity : Activity() {
     private lateinit var root: FrameLayout
     private lateinit var keyPreview: TextView
     private lateinit var bottomStack: LinearLayout
+    private lateinit var scalePanel: LinearLayout
+    private lateinit var scaleStatus: TextView
+    private lateinit var scaleSeek: SeekBar
+    private val scaleControls = mutableListOf<View>()
+    private var external: DisplayInfo? = null
 
     private val handler = Handler(Looper.getMainLooper())
     private val pollRunnable = Runnable { pollForService() }
@@ -122,6 +131,8 @@ class MainActivity : Activity() {
         lockButton.text = if (s.locked) "🔒" else "🔓"
         lockButton.setTextColor(if (s.locked) WARN else MUTED)
         lockOverlay.visibility = if (s.locked) View.VISIBLE else View.GONE
+        external = s.external
+        if (scalePanel.visibility == View.VISIBLE) refreshScale()
     }
 
     private fun openAccessibilitySettings() {
@@ -138,7 +149,107 @@ class MainActivity : Activity() {
     private fun toggleKeyboard() {
         val show = keyboardPanel.visibility != View.VISIBLE
         keyboardPanel.visibility = if (show) View.VISIBLE else View.GONE
-        if (show) refreshKbStatus()
+        if (show) { scalePanel.visibility = View.GONE; refreshKbStatus() }
+    }
+
+    // ---- desktop scale (external display density) ----
+
+    private fun toggleScale() {
+        val show = scalePanel.visibility != View.VISIBLE
+        scalePanel.visibility = if (show) View.VISIBLE else View.GONE
+        if (show) { keyboardPanel.visibility = View.GONE; refreshScale() }
+    }
+
+    private fun currentDpi(displayId: Int): Int? =
+        getSystemService(DisplayManager::class.java).getDisplay(displayId)
+            ?.let { createDisplayContext(it).resources.displayMetrics.densityDpi }
+
+    private fun refreshScale() {
+        val ext = external
+        val dpi = ext?.let { currentDpi(it.id) }
+        when {
+            ext == null || dpi == null -> setScale("connect a display first", MUTED, enabled = false)
+            !DisplayDensity.isGranted(this) ->
+                setScale("one-time setup, from a PC:\n${DisplayDensity.GRANT_COMMAND}", WARN, enabled = false)
+            else -> {
+                scaleSeek.progress = DesktopScale.positionOf(dpi)
+                setScale(describeScale(ext, dpi), TEXT, enabled = true)
+            }
+        }
+    }
+
+    private fun describeScale(ext: DisplayInfo, dpi: Int): String {
+        val (w, h) = DesktopScale.workspaceDp(ext.width, ext.height, dpi)
+        return "display ${ext.id} · $dpi dpi · desktop ${w}×$h dp"
+    }
+
+    private fun setScale(text: String, color: Int, enabled: Boolean) {
+        scaleStatus.text = text; scaleStatus.setTextColor(color)
+        scaleControls.forEach { it.isEnabled = enabled; it.alpha = if (enabled) 1f else 0.4f }
+    }
+
+    private fun applyScale(dpi: Int?) {
+        val ext = external ?: return
+        scaleStatus.text = if (dpi == null) "resetting…" else "applying $dpi dpi…"
+        Thread {
+            val result = if (dpi == null) DisplayDensity.reset(ext.id) else DisplayDensity.set(ext.id, dpi)
+            runOnUiThread {
+                val error = result.exceptionOrNull()
+                if (error == null) refreshScale()
+                else setScale("failed: ${rootCause(error)}", WARN, enabled = true)
+            }
+        }.start()
+    }
+
+    private fun stepScale(delta: Int) {
+        val p = (scaleSeek.progress + delta).coerceIn(0, DesktopScale.positions - 1)
+        scaleSeek.progress = p
+        applyScale(DesktopScale.dpiAt(p))
+    }
+
+    private fun rootCause(t: Throwable): String {
+        var c = t
+        while (c.cause != null && c.cause !== c) c = c.cause!!
+        return "${c.javaClass.simpleName}: ${c.message}"
+    }
+
+    private fun buildScalePanel(): LinearLayout {
+        val panel = LinearLayout(this).apply {
+            orientation = LinearLayout.VERTICAL
+            setBackgroundColor(0xFF090D12.toInt())
+            setPadding(dp(14), dp(10), dp(14), dp(12))
+            visibility = View.GONE
+        }
+        panel.addView(TextView(this).apply {
+            text = "Desktop scale · smaller = more room"; setTextColor(TEXT); textSize = 13f
+        })
+        scaleStatus = TextView(this).apply {
+            setTextColor(MUTED); textSize = 11f; typeface = Typeface.MONOSPACE
+            setPadding(0, dp(4), 0, dp(4))
+        }
+        panel.addView(scaleStatus)
+        scaleSeek = SeekBar(this).apply {
+            max = DesktopScale.positions - 1
+            setOnSeekBarChangeListener(object : SeekBar.OnSeekBarChangeListener {
+                override fun onProgressChanged(sb: SeekBar, p: Int, fromUser: Boolean) {
+                    // Preview only: applying relayouts the whole desktop, so wait for release.
+                    val ext = external
+                    if (fromUser && ext != null) scaleStatus.text = describeScale(ext, DesktopScale.dpiAt(p))
+                }
+                override fun onStartTrackingTouch(sb: SeekBar) {}
+                override fun onStopTrackingTouch(sb: SeekBar) = applyScale(DesktopScale.dpiAt(sb.progress))
+            })
+        }
+        panel.addView(scaleSeek, LinearLayout.LayoutParams(MATCH, WRAP).apply { topMargin = dp(4) })
+        val buttons = row {
+            addView(specialKey("smaller", 1f) { stepScale(-1) })
+            addView(specialKey("bigger", 1f) { stepScale(+1) })
+            addView(specialKey("reset", 1f) { applyScale(null) })
+        }
+        panel.addView(buttons)
+        scaleControls += scaleSeek
+        for (i in 0 until buttons.childCount) scaleControls += buttons.getChildAt(i)
+        return panel
     }
 
     // ---- navigation (the taskbar's back / home / recents, on the phone) ----
@@ -374,12 +485,14 @@ class MainActivity : Activity() {
         statusBar = buildStatusBar()
         root.addView(statusBar, FrameLayout.LayoutParams(MATCH, WRAP).apply { gravity = Gravity.TOP })
 
-        // Bottom stack, like a taskbar: optional keyboard above an always-on nav row.
+        // Bottom stack, like a taskbar: optional keyboard / scale panel above an always-on nav row.
         keyboardPanel = buildKeyboardPanel()
+        scalePanel = buildScalePanel()
         bottomStack = LinearLayout(this).apply {
             orientation = LinearLayout.VERTICAL
             setBackgroundColor(0xFF090D12.toInt())
             addView(keyboardPanel)
+            addView(scalePanel)
             addView(buildNavBar())
         }
         root.addView(bottomStack, FrameLayout.LayoutParams(MATCH, WRAP).apply { gravity = Gravity.BOTTOM })
@@ -416,6 +529,7 @@ class MainActivity : Activity() {
             text = "Starting…"; setTextColor(TEXT); textSize = 12f; typeface = Typeface.MONOSPACE
         }
         bar.addView(statusText, LinearLayout.LayoutParams(0, WRAP, 1f))
+        bar.addView(iconButton("🖥") { toggleScale() })
         bar.addView(iconButton("⌨") { toggleKeyboard() })
         lockButton = iconButton("🔓") { service?.setLocked(true) }
         bar.addView(lockButton)

@@ -60,5 +60,7 @@ android {
 
 dependencies {
     // No Shizuku / no root: privilege comes from a user-enabled AccessibilityService.
+    // The optional desktop-scale slider calls one hidden WindowManager method (see DisplayDensity).
+    implementation("org.lsposed.hiddenapibypass:hiddenapibypass:6.1")
     testImplementation("junit:junit:4.13.2")
 }
