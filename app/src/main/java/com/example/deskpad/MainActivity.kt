@@ -59,10 +59,32 @@ class MainActivity : Activity() {
         setContentView(buildUi())
     }
 
+    /**
+     * Keep the desktop app focused while you use the trackpad, without ever leaving the system
+     * with no focused window.
+     *
+     * A touch on a focusable window moves the system's top-focused display to the phone, which
+     * un-focuses the app on the external display. A non-focusable window avoids that — but if the
+     * phone is the top-focused display while DeskPad (its top activity) can't take focus, there is
+     * no focused window at all: accessibility then won't compute windows (every
+     * getWindowsOnAllDisplays waits 5 s per display) and key events to the phone ANR. Measured on a
+     * Pixel 9 Pro XL, Android 17: 10 003 ms vs 7 ms.
+     *
+     * So DeskPad is focusable exactly while it's the top resumed activity (the phone is
+     * top-focused), and stops being focusable once focus moves to the desktop — e.g. on your first
+     * click there — so later trackpad touches leave it there.
+     */
+    override fun onTopResumedActivityChanged(isTopResumedActivity: Boolean) {
+        super.onTopResumedActivityChanged(isTopResumedActivity)
+        if (isTopResumedActivity) window.clearFlags(WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE)
+        else window.addFlags(WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE)
+    }
+
     override fun onResume() {
         super.onResume()
         handler.removeCallbacks(pollRunnable)
         pollForService()
+        service?.probeWindows()
     }
 
     override fun onPause() {
@@ -131,8 +153,7 @@ class MainActivity : Activity() {
         if (!::kbStatus.isInitialized) return
         val svc = service
         if (svc == null) { setKb("enable DeskPad accessibility first", WARN); return }
-        val diag = svc.keyboardDiagnostics()
-        setKb(diag, if (diag.startsWith("●")) GOOD else WARN)
+        svc.keyboardDiagnostics { diag -> setKb(diag, if (diag.startsWith("●")) GOOD else WARN) }
     }
 
     private fun setKb(text: String, color: Int) {

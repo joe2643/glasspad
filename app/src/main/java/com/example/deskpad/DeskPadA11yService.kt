@@ -6,15 +6,20 @@ import android.graphics.Rect
 import android.hardware.display.DisplayManager
 import android.os.Bundle
 import android.os.Handler
+import android.os.HandlerThread
 import android.os.Looper
+import android.os.SystemClock
 import android.util.DisplayMetrics
+import android.util.Log
 import android.view.Display
 import android.view.accessibility.AccessibilityEvent
 import android.view.accessibility.AccessibilityNodeInfo
+import android.view.accessibility.AccessibilityWindowInfo
 import com.example.deskpad.core.Bounds
 import com.example.deskpad.core.CursorController
 import com.example.deskpad.core.DisplayInfo
 import com.example.deskpad.core.DisplayTargetResolver
+import com.example.deskpad.core.GestureAction
 import com.example.deskpad.core.GestureRecognizer
 import com.example.deskpad.core.InputPipeline
 import com.example.deskpad.core.LockController
@@ -26,9 +31,10 @@ import com.example.deskpad.core.PadFrame
  * the cursor on the external display, tracks which display is external, and dispatches gestures.
  * The UI ([MainActivity]) feeds it pad frames via [instance].
  *
- * Everything runs on the **main thread** — pad frames arrive there (touch events) and display
- * callbacks are delivered there — so [CursorController] is only ever touched from one thread and
- * `dispatchGesture` is called where the platform expects it. No background handler.
+ * Input runs on the **main thread** — pad frames arrive there (touch events) and display callbacks
+ * are delivered there — so [CursorController] is only ever touched from one thread and
+ * `dispatchGesture` is called where the platform expects it. Window queries (the keyboard's)
+ * run on one worker thread, because the system can take seconds to answer them.
  */
 class DeskPadA11yService : AccessibilityService() {
 
@@ -48,11 +54,18 @@ class DeskPadA11yService : AccessibilityService() {
     private lateinit var displayManager: DisplayManager
     private val main = Handler(Looper.getMainLooper())
 
+    // Window queries (getWindowsOnAllDisplays and node trees) can block for seconds when the system
+    // is slow to compute accessibility windows — on the main thread that's an ANR. So every one of
+    // them runs on this worker, which also owns the keyboard's buffer/caret below.
+    private val worker = HandlerThread("deskpad-a11y").apply { start() }
+    private val bg = Handler(worker.looper)
+
     @Volatile private var targetDisplayId = INVALID
-    private var lastClick: com.example.deskpad.core.Point? = null
+    @Volatile private var lastClick: com.example.deskpad.core.Point? = null
 
     // Local mirror of the clicked field's text, so typing is deterministic (SET_TEXT is async, so
     // re-reading the node every keystroke could drop characters). Synced when the field is clicked.
+    // Worker thread only.
     private val buffer = StringBuilder()
     private var caret = 0
 
@@ -65,6 +78,20 @@ class DeskPadA11yService : AccessibilityService() {
         displayManager.registerDisplayListener(displayListener, main)
         instance = this
         refreshDisplays()
+        probeWindows()
+    }
+
+    /** Logs how long the system takes to hand over the window list — the ANR canary. */
+    fun probeWindows() = bg.post { windows() }
+
+    /** getWindowsOnAllDisplays, timed. Worker thread only. */
+    private fun windows(): android.util.SparseArray<List<AccessibilityWindowInfo>> {
+        val t = SystemClock.uptimeMillis()
+        val all = windowsOnAllDisplays
+        val ms = SystemClock.uptimeMillis() - t
+        if (ms > SLOW_WINDOWS_MS) Log.w(A11Y_TAG, "getWindowsOnAllDisplays took $ms ms")
+        else Log.d(A11Y_TAG, "getWindowsOnAllDisplays took $ms ms")
+        return all
     }
 
     override fun onUnbind(intent: android.content.Intent?): Boolean {
@@ -74,6 +101,7 @@ class DeskPadA11yService : AccessibilityService() {
 
     override fun onDestroy() {
         teardown()
+        worker.quitSafely()
         super.onDestroy()
     }
 
@@ -90,9 +118,9 @@ class DeskPadA11yService : AccessibilityService() {
         for (action in gestures.onFrame(frame)) {
             // Remember where the user clicked on the desktop — that's the text field to type into,
             // since it is never truly input-focused while this app is foreground.
-            if (action == com.example.deskpad.core.GestureAction.LeftClick) {
+            if (action == GestureAction.LeftClick) {
                 lastClick = cursor.positionFor(displayId)
-                syncBuffer()
+                bg.post { syncBuffer() }
             }
             pipeline.dispatch(displayId, action)
         }
@@ -110,15 +138,14 @@ class DeskPadA11yService : AccessibilityService() {
     //
     // The DeskPad keys are Buttons, which never take input focus, so the desktop field stays
     // focused while you type. Each keystroke edits that focused field's text via accessibility —
-    // insert at the caret, delete, submit, and the standard clipboard actions.
-
-    val hasFocusedField: Boolean get() = targetField() != null
+    // insert at the caret, delete, submit, and the standard clipboard actions. The public calls
+    // return immediately; the work runs in order on the worker thread.
 
     /** The field's real text ("" when it's only showing its hint placeholder). */
     private fun currentText(n: AccessibilityNodeInfo): String =
         if (n.isShowingHintText) "" else (n.text?.toString() ?: "")
 
-    /** Load the clicked field's current text into the local buffer. */
+    /** Load the clicked field's current text into the local buffer. Worker thread. */
     private fun syncBuffer() {
         val n = targetField()
         buffer.setLength(0)
@@ -127,34 +154,39 @@ class DeskPadA11yService : AccessibilityService() {
     }
 
     /** Insert [insert] at the caret and push the buffer to the clicked desktop field. */
-    fun typeText(insert: CharSequence): Boolean {
-        if (lock.isLocked) return false
-        val n = targetField() ?: return false
-        val c = caret.coerceIn(0, buffer.length)
-        buffer.insert(c, insert)
-        caret = c + insert.length
-        return setText(n, buffer.toString(), caret)
-    }
-
-    /** A user-facing summary of what the accessibility service can see, for on-device debugging. */
-    fun keyboardDiagnostics(): String {
-        val all = windowsOnAllDisplays
-        val ids = (0 until all.size()).map { all.keyAt(it) }
-        val external = ids.filter { it != Display.DEFAULT_DISPLAY }
-        return when {
-            external.isEmpty() -> "a11y sees displays $ids — external display not visible"
-            hasFocusedField -> "● field ready on display $external — type"
-            else -> "sees display $external — click a text field there"
+    fun typeText(insert: CharSequence) {
+        if (lock.isLocked) return
+        bg.post {
+            val n = targetField() ?: return@post
+            val c = caret.coerceIn(0, buffer.length)
+            buffer.insert(c, insert)
+            caret = c + insert.length
+            setText(n, buffer.toString(), caret)
         }
     }
 
+    /** A user-facing summary of what the accessibility service can see, for on-device debugging. */
+    fun keyboardDiagnostics(onResult: (String) -> Unit) = bg.post {
+        val all = windows()
+        val ids = (0 until all.size()).map { all.keyAt(it) }
+        val external = ids.filter { it != Display.DEFAULT_DISPLAY }
+        val text = when {
+            external.isEmpty() -> "a11y sees displays $ids — external display not visible"
+            targetField() != null -> "● field ready on display $external — type"
+            else -> "sees display $external — click a text field there"
+        }
+        main.post { onResult(text) }
+    }
+
     /** Delete the selection, or the char before the caret. */
-    fun backspace(): Boolean {
-        if (lock.isLocked) return false
-        val n = targetField() ?: return false
-        val c = caret.coerceIn(0, buffer.length)
-        if (c > 0) { buffer.deleteCharAt(c - 1); caret = c - 1 }
-        return setText(n, buffer.toString(), caret)
+    fun backspace() {
+        if (lock.isLocked) return
+        bg.post {
+            val n = targetField() ?: return@post
+            val c = caret.coerceIn(0, buffer.length)
+            if (c > 0) { buffer.deleteCharAt(c - 1); caret = c - 1 }
+            setText(n, buffer.toString(), caret)
+        }
     }
 
     /**
@@ -167,22 +199,23 @@ class DeskPadA11yService : AccessibilityService() {
      *      disturb the phone), wait for the IME to bind, then retry the editor action;
      *   3. click the app's own send/submit button — the fallback for fields with no editor action.
      */
-    fun enter(): Boolean {
-        if (lock.isLocked) return false
-        val n = targetField() ?: return false
-        // 1) A send/submit button on the field's own row (chat, search) — the most reliable submit,
-        //    and it needs no input focus.
-        if (clickSubmitNear(n)) { syncBuffer(); return true }
-        // 2) Otherwise (e.g. a browser address bar with no button) give the field input focus, let the
-        //    IME bind, then fire its editor action. IME_ENTER's return value is unreliable — it reports
-        //    success even on an unfocused field where nothing happens — so we always focus first and
-        //    don't branch on it.
-        n.performAction(AccessibilityNodeInfo.ACTION_FOCUS)
-        main.postDelayed({
-            targetField()?.performAction(AccessibilityNodeInfo.AccessibilityAction.ACTION_IME_ENTER.id)
-            syncBuffer()
-        }, IME_ENTER_RETRY_MS)
-        return true
+    fun enter() {
+        if (lock.isLocked) return
+        bg.post {
+            val n = targetField() ?: return@post
+            // 1) A send/submit button on the field's own row (chat, search) — the most reliable
+            //    submit, and it needs no input focus.
+            if (clickSubmitNear(n)) { syncBuffer(); return@post }
+            // 2) Otherwise (e.g. a browser address bar with no button) give the field input focus,
+            //    let the IME bind, then fire its editor action. IME_ENTER's return value is
+            //    unreliable — it reports success even on an unfocused field where nothing happens —
+            //    so we always focus first and don't branch on it.
+            n.performAction(AccessibilityNodeInfo.ACTION_FOCUS)
+            bg.postDelayed({
+                targetField()?.performAction(AccessibilityNodeInfo.AccessibilityAction.ACTION_IME_ENTER.id)
+                syncBuffer()
+            }, IME_ENTER_RETRY_MS)
+        }
     }
 
     /** Click a send/submit button sitting on the same row as [field] (a chat composer / search bar). */
@@ -190,7 +223,7 @@ class DeskPadA11yService : AccessibilityService() {
         val displayId = targetDisplayId
         if (displayId == INVALID) return false
         val fieldRect = Rect().also { field.getBoundsInScreen(it) }
-        val all = windowsOnAllDisplays
+        val all = windows()
         for (i in 0 until all.size()) {
             if (all.keyAt(i) != displayId) continue
             for (w in all.valueAt(i)) {
@@ -220,24 +253,27 @@ class DeskPadA11yService : AccessibilityService() {
     }
 
     /** Clipboard / selection actions: ACTION_COPY / ACTION_PASTE / ACTION_CUT. */
-    fun editAction(actionId: Int): Boolean {
-        if (lock.isLocked) return false
-        val ok = targetField()?.performAction(actionId) ?: false
-        syncBuffer() // paste/cut change the field's text — re-read it
-        return ok
+    fun editAction(actionId: Int) {
+        if (lock.isLocked) return
+        bg.post {
+            targetField()?.performAction(actionId)
+            syncBuffer() // paste/cut change the field's text — re-read it
+        }
     }
 
-    fun selectAll(): Boolean {
-        if (lock.isLocked) return false
-        val n = targetField() ?: return false
-        val len = n.text?.length ?: 0
-        return n.performAction(
-            AccessibilityNodeInfo.ACTION_SET_SELECTION,
-            Bundle().apply {
-                putInt(AccessibilityNodeInfo.ACTION_ARGUMENT_SELECTION_START_INT, 0)
-                putInt(AccessibilityNodeInfo.ACTION_ARGUMENT_SELECTION_END_INT, len)
-            },
-        )
+    fun selectAll() {
+        if (lock.isLocked) return
+        bg.post {
+            val n = targetField() ?: return@post
+            val len = n.text?.length ?: 0
+            n.performAction(
+                AccessibilityNodeInfo.ACTION_SET_SELECTION,
+                Bundle().apply {
+                    putInt(AccessibilityNodeInfo.ACTION_ARGUMENT_SELECTION_START_INT, 0)
+                    putInt(AccessibilityNodeInfo.ACTION_ARGUMENT_SELECTION_END_INT, len)
+                },
+            )
+        }
     }
 
     private fun setText(n: AccessibilityNodeInfo, text: String, caret: Int): Boolean {
@@ -269,7 +305,7 @@ class DeskPadA11yService : AccessibilityService() {
         val p = lastClick ?: return null
         val displayId = targetDisplayId
         if (displayId == INVALID) return null
-        val all = windowsOnAllDisplays
+        val all = windows()
         for (i in 0 until all.size()) {
             if (all.keyAt(i) != displayId) continue
             for (w in all.valueAt(i)) {
@@ -335,6 +371,8 @@ class DeskPadA11yService : AccessibilityService() {
 
     companion object {
         private const val INVALID = -1
+        private const val A11Y_TAG = "DeskPadA11y"
+        private const val SLOW_WINDOWS_MS = 200L
         private const val IME_ENTER_RETRY_MS = 180L
         private val SUBMIT_HINTS = listOf("send", "search", "go", "submit", "post", "reply", "return")
 
