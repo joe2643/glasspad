@@ -137,6 +137,20 @@ While GlassPad is foreground on the phone, **nothing on the desktop is input-foc
 - On-screen keys are `Button`s (they never take input focus), so clicking them doesn't steal the
   desktop field's selection. The keyboard layout mirrors Gboard (letters / `?123` / `=\<` pages).
 
+### Typing with the phone's own keyboard
+
+GlassPad's keys never take focus, but an IME (Gboard) only appears for a focused text box. So the
+phone-keyboard panel is a plain `EditText` on the phone: whatever IME the user has does all the
+composing there (Chinese candidates, glide, voice), and **Send** / **Insert** hand the finished text
+to `GlassPadA11yService.insertText`, which writes it at the caret like a GlassPad keystroke (and
+presses Enter for Send). The window is focusable while that panel is open.
+
+The catch: with the phone focused, accessibility reports only the phone's windows, so the fresh
+search for the clicked field can come back empty. `insertText` first uses the field found at the
+last click (`AccessibilityNodeInfo.refresh()` says whether it's still reachable); if writing it
+fails, it clicks the last-click point on the desktop so the desktop takes focus back, then retries a
+few times. `adb logcat -s GlassPadKeys` shows which path was taken.
+
 ### Enter that actually submits
 
 `ACTION_IME_ENTER` returns `true` even on an unfocused field while doing nothing — a false positive.

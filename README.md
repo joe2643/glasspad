@@ -129,6 +129,13 @@ haptic tap.
 
 **Enter really submits:** in a chat box it presses Send; in an address bar or search box it goes.
 
+**Prefer your own keyboard?** Tap **Phone keyboard** above the keys. GlassPad then shows a text box
+that uses the phone's own keyboard (Gboard or whatever you use) — so Chinese input (Cangjie,
+Cantonese, pinyin…), glide typing, voice typing and autocorrect all work. Type, then **Send** (or the
+keyboard's send key) to put the text in the desktop field and press Enter there, or **Insert** to
+put it there without Enter. ⌨ remembers which keyboard you used last; **GlassPad keys** switches
+back. While the phone keyboard is open, the phone has focus, so desktop window menus may close.
+
 ### Bottom row
 
 | Icon | What it does |
@@ -147,7 +154,7 @@ haptic tap.
   this). Tap **Open Accessibility settings** and turn GlassPad back on.
 - **Fullscreen or desktop scale shows an adb command** — run the grant from
   [Optional extras](#optional-extras-one-adb-command-each).
-- **Something specific misbehaves** — `adb logcat -s GlassPadGesture GlassPadNav GlassPadShell GlassPadA11y`
+- **Something specific misbehaves** — `adb logcat -s GlassPadGesture GlassPadNav GlassPadShell GlassPadA11y GlassPadKeys`
   shows what GlassPad decided and why.
 
 ## Privacy & permissions

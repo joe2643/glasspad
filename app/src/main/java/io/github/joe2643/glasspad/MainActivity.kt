@@ -11,15 +11,20 @@ import android.os.Bundle
 import android.os.Handler
 import android.os.Looper
 import android.provider.Settings
+import android.text.InputType
 import android.util.Log
 import android.view.Gravity
 import android.view.HapticFeedbackConstants
+import android.view.KeyEvent
 import android.view.MotionEvent
 import android.view.View
 import android.view.WindowInsets
 import android.view.WindowManager
 import android.view.accessibility.AccessibilityNodeInfo
+import android.view.inputmethod.EditorInfo
+import android.view.inputmethod.InputMethodManager
 import android.widget.Button
+import android.widget.EditText
 import android.widget.FrameLayout
 import android.widget.ImageButton
 import android.widget.ImageView
@@ -51,6 +56,14 @@ class MainActivity : Activity() {
     private lateinit var lockOverlay: FrameLayout
     private lateinit var holdLevel: ClipDrawable
     private lateinit var keyboardPanel: LinearLayout
+    private lateinit var phonePanel: LinearLayout
+    private lateinit var phoneInput: EditText
+    private var isTopResumed = false
+    private val prefs by lazy { getSharedPreferences("glasspad", MODE_PRIVATE) }
+    /** Whether ⌨ opens the phone's own keyboard (Gboard…) instead of GlassPad's keys. */
+    private var phoneKeyboard: Boolean
+        get() = prefs.getBoolean(PREF_PHONE_KEYBOARD, false)
+        set(value) = prefs.edit().putBoolean(PREF_PHONE_KEYBOARD, value).apply()
     private lateinit var kbStatus: TextView
     private lateinit var header: LinearLayout
     private lateinit var rowsContainer: LinearLayout
@@ -98,7 +111,15 @@ class MainActivity : Activity() {
      */
     override fun onTopResumedActivityChanged(isTopResumedActivity: Boolean) {
         super.onTopResumedActivityChanged(isTopResumedActivity)
-        if (isTopResumedActivity) window.clearFlags(WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE)
+        isTopResumed = isTopResumedActivity
+        updateFocusability()
+    }
+
+    /** Focusable while top resumed (see above), and while the phone keyboard panel is open — the
+     *  phone's keyboard needs a focused text box on the phone. */
+    private fun updateFocusability() {
+        val typingOnPhone = ::phonePanel.isInitialized && phonePanel.visibility == View.VISIBLE
+        if (isTopResumed || typingOnPhone) window.clearFlags(WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE)
         else window.addFlags(WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE)
     }
 
@@ -223,18 +244,119 @@ class MainActivity : Activity() {
 
     /** Shows [panel] (or none) and lights up its header button. */
     private fun showPanel(panel: View?) {
-        for ((p, button) in listOf(keyboardPanel to kbButton, scalePanel to scaleButton)) {
-            val on = p === panel
-            p.visibility = if (on) View.VISIBLE else View.GONE
-            button.imageTintList = tint(if (on) Ui.ACCENT else Ui.MUTED)
-            button.background = Ui.borderless(if (on) Ui.ACCENT_SOFT else null)
+        for (p in listOf(keyboardPanel, phonePanel, scalePanel)) {
+            p.visibility = if (p === panel) View.VISIBLE else View.GONE
         }
+        setActive(kbButton, panel === keyboardPanel || panel === phonePanel)
+        setActive(scaleButton, panel === scalePanel)
+        updateFocusability()
+        if (panel === phonePanel) focusPhoneInput() else hideIme()
+    }
+
+    private fun setActive(button: ImageButton, on: Boolean) {
+        button.imageTintList = tint(if (on) Ui.ACCENT else Ui.MUTED)
+        button.background = Ui.borderless(if (on) Ui.ACCENT_SOFT else null)
     }
 
     private fun toggleKeyboard() {
-        val show = keyboardPanel.visibility != View.VISIBLE
-        showPanel(if (show) keyboardPanel else null)
-        if (show) refreshKbStatus()
+        val open = keyboardPanel.visibility == View.VISIBLE || phonePanel.visibility == View.VISIBLE
+        showPanel(if (open) null else if (phoneKeyboard) phonePanel else keyboardPanel)
+        if (!open && !phoneKeyboard) refreshKbStatus()
+    }
+
+    /** Switches ⌨ between GlassPad's keys and the phone's own keyboard, and remembers the choice. */
+    private fun usePhoneKeyboard(on: Boolean) {
+        phoneKeyboard = on
+        showPanel(if (on) phonePanel else keyboardPanel)
+        if (!on) refreshKbStatus()
+    }
+
+    // ---- the phone's own keyboard (Gboard…), relayed to the desktop field ----
+
+    private fun focusPhoneInput() {
+        phoneInput.requestFocus()
+        // Shows at once when the phone has focus; otherwise the hint asks for a tap, which focuses it.
+        getSystemService(InputMethodManager::class.java).showSoftInput(phoneInput, 0)
+    }
+
+    private fun hideIme() {
+        if (::phoneInput.isInitialized) {
+            getSystemService(InputMethodManager::class.java).hideSoftInputFromWindow(phoneInput.windowToken, 0)
+        }
+    }
+
+    /** Sends what's in the box to the clicked desktop field; [submit] also presses Enter there. */
+    private fun sendPhoneText(submit: Boolean) {
+        val text = phoneInput.text.toString()
+        if (text.isEmpty() && !submit) return
+        withService { svc ->
+            svc.insertText(text, submit) { error ->
+                if (error != null) {
+                    Toast.makeText(this, error, Toast.LENGTH_LONG).show()
+                } else {
+                    phoneInput.text.clear()
+                    getSystemService(InputMethodManager::class.java).restartInput(phoneInput)
+                }
+            }
+        }
+    }
+
+    private fun buildPhonePanel(): LinearLayout {
+        val panel = LinearLayout(this).apply {
+            orientation = LinearLayout.VERTICAL
+            setPadding(dp(10), dp(12), dp(10), dp(6))
+            visibility = View.GONE
+        }
+        panel.addView(LinearLayout(this).apply {
+            orientation = LinearLayout.HORIZONTAL
+            gravity = Gravity.CENTER_VERTICAL
+            addView(TextView(this@MainActivity).apply {
+                text = "Phone keyboard · types into the desktop field you clicked"
+                setTextColor(Ui.MUTED); textSize = 11f
+                setPadding(dp(6), 0, dp(6), 0)
+            }, LinearLayout.LayoutParams(0, WRAP, 1f))
+            addView(switchLink("GlassPad keys") { usePhoneKeyboard(false) })
+        })
+        phoneInput = EditText(this).apply {
+            hint = "Tap here, type, then Send"
+            setHintTextColor(Ui.FAINT); setTextColor(Ui.TEXT); textSize = 16f
+            background = Ui.rounded(Ui.KEY, dp(24).toFloat())
+            setPadding(dp(18), 0, dp(18), 0)
+            isSingleLine = true
+            inputType = InputType.TYPE_CLASS_TEXT or InputType.TYPE_TEXT_FLAG_AUTO_CORRECT or
+                InputType.TYPE_TEXT_FLAG_CAP_SENTENCES
+            imeOptions = EditorInfo.IME_ACTION_SEND or EditorInfo.IME_FLAG_NO_EXTRACT_UI or
+                EditorInfo.IME_FLAG_NO_FULLSCREEN
+            setOnEditorActionListener { _, actionId, event ->
+                val enterKey = event?.keyCode == KeyEvent.KEYCODE_ENTER && event.action == KeyEvent.ACTION_DOWN
+                if (actionId == EditorInfo.IME_ACTION_SEND || enterKey) { sendPhoneText(submit = true); true }
+                else false
+            }
+        }
+        panel.addView(LinearLayout(this).apply {
+            orientation = LinearLayout.HORIZONTAL
+            gravity = Gravity.CENTER_VERTICAL
+            setPadding(0, dp(8), 0, 0)
+            addView(phoneInput, LinearLayout.LayoutParams(0, dp(48), 1f))
+            addView(key("Insert", 0f, Ui.KEY_SPECIAL, Ui.MUTED, 14f) { sendPhoneText(submit = false) }.apply {
+                layoutParams = LinearLayout.LayoutParams(WRAP, dp(48)).apply { marginStart = dp(8) }
+                setPadding(dp(18), 0, dp(18), 0)
+            })
+            addView(key("Send", 0f, Ui.ACCENT, Ui.ON_ACCENT, 14f) { sendPhoneText(submit = true) }.apply {
+                layoutParams = LinearLayout.LayoutParams(WRAP, dp(48)).apply { marginStart = dp(6) }
+                setPadding(dp(18), 0, dp(18), 0)
+                typeface = MEDIUM
+            })
+        })
+        return panel
+    }
+
+    /** A small accent text link, for switching between the two keyboards. */
+    private fun switchLink(label: String, onClick: () -> Unit) = TextView(this).apply {
+        text = label; setTextColor(Ui.ACCENT); textSize = 12f; typeface = MEDIUM
+        setPadding(dp(10), dp(6), dp(10), dp(6))
+        background = Ui.pressable(Ui.ACCENT_SOFT, dp(14).toFloat())
+        setOnClickListener { v -> hapticTap(v); onClick() }
     }
 
     private fun toggleScale() {
@@ -419,9 +541,14 @@ class MainActivity : Activity() {
         kbStatus = TextView(this).apply {
             text = "click a desktop text field first"
             setTextColor(Ui.MUTED); textSize = 11f
-            setPadding(dp(8), 0, dp(8), dp(4))
+            setPadding(dp(8), 0, dp(8), 0)
         }
-        panel.addView(kbStatus)
+        panel.addView(LinearLayout(this).apply {
+            orientation = LinearLayout.HORIZONTAL
+            gravity = Gravity.CENTER_VERTICAL
+            addView(kbStatus, LinearLayout.LayoutParams(0, WRAP, 1f))
+            addView(switchLink("Phone keyboard") { usePhoneKeyboard(true) })
+        })
         panel.addView(actionsRow())
         rowsContainer = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL }
         panel.addView(rowsContainer)
@@ -626,11 +753,13 @@ class MainActivity : Activity() {
 
         // Bottom sheet: optional keyboard / scale panel above an always-on nav row.
         keyboardPanel = buildKeyboardPanel()
+        phonePanel = buildPhonePanel()
         scalePanel = buildScalePanel()
         bottomSheet = LinearLayout(this).apply {
             orientation = LinearLayout.VERTICAL
             background = Ui.sheet(Ui.SHEET, dp(20).toFloat())
             addView(keyboardPanel)
+            addView(phonePanel)
             addView(scalePanel)
             addView(buildNavBar())
         }
@@ -653,12 +782,13 @@ class MainActivity : Activity() {
         root.addView(lockOverlay, FrameLayout.LayoutParams(MATCH, MATCH))
 
         // Inset the header below the status bar / cutout, and the bottom sheet above the
-        // navigation bar (3-button or gesture), so its bottom row is never hidden.
+        // navigation bar (3-button or gesture) or the phone's keyboard, so nothing is hidden.
+        // (Edge-to-edge apps get no adjustResize: the keyboard is just another inset.)
         root.setOnApplyWindowInsetsListener { _, insets ->
             val top = insets.getInsets(WindowInsets.Type.statusBars()).top
-            val nav = insets.getInsets(WindowInsets.Type.navigationBars()).bottom
+            val bottom = insets.getInsets(WindowInsets.Type.navigationBars() or WindowInsets.Type.ime()).bottom
             header.setPadding(dp(18), top + dp(10), dp(8), dp(12))
-            bottomSheet.setPadding(0, 0, 0, nav)
+            bottomSheet.setPadding(0, 0, 0, bottom)
             insets
         }
         return root
@@ -775,6 +905,7 @@ class MainActivity : Activity() {
         const val LETTERS = 0
         const val SYMBOLS = 1
         const val MORE_SYMBOLS = 2
+        const val PREF_PHONE_KEYBOARD = "phone_keyboard"
         const val KEY_HEIGHT = 48
         const val CHIP_HEIGHT = 36
         const val MATCH = FrameLayout.LayoutParams.MATCH_PARENT

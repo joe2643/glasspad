@@ -71,6 +71,7 @@ class GlassPadA11yService : AccessibilityService() {
     // Worker thread only.
     private val buffer = StringBuilder()
     private var caret = 0
+    private var cachedField: AccessibilityNodeInfo? = null // the field found at the last click
 
     override fun onServiceConnected() {
         super.onServiceConnected()
@@ -249,9 +250,68 @@ class GlassPadA11yService : AccessibilityService() {
     /** Load the clicked field's current text into the local buffer. Worker thread. */
     private fun syncBuffer() {
         val n = targetField()
+        cachedField = n
         buffer.setLength(0)
         buffer.append(n?.let { currentText(it) } ?: "")
         caret = buffer.length
+    }
+
+    /**
+     * The clicked field: found afresh, or the one found at the last click. Accessibility reports only
+     * the top-focused display's windows, so while you type on the phone's own keyboard (the phone
+     * has focus) the fresh search can come back empty. Worker thread.
+     */
+    private fun field(): AccessibilityNodeInfo? =
+        targetField()?.also { cachedField = it } ?: cachedField?.takeIf { it.refresh() }
+
+    /**
+     * Inserts [text] typed on the phone's own keyboard (Gboard…) into the clicked desktop field at
+     * the caret, then presses Enter there if [submit]. If the field can't be written while the phone
+     * has focus, this clicks where the field was (the last click) so the desktop takes focus back,
+     * and retries. [onDone] gets null on success or a message saying why not, on the main thread.
+     */
+    fun insertText(text: String, submit: Boolean, onDone: (String?) -> Unit) {
+        if (lock.isLocked) { main.post { onDone("The touchpad is locked") }; return }
+        bg.post { insertAttempt(text, submit, 0, onDone) }
+    }
+
+    private fun insertAttempt(text: String, submit: Boolean, attempt: Int, onDone: (String?) -> Unit) {
+        val n = field()
+        if (n != null && writeAtCaret(n, text)) {
+            Log.d(KEYS_TAG, "inserted ${text.length} chars (attempt $attempt)")
+            if (submit) enterNow(n)
+            main.post { onDone(null) }
+            return
+        }
+        val p = lastClick
+        val displayId = targetDisplayId
+        when {
+            p == null || displayId == INVALID -> main.post { onDone("Click a text field on the desktop first") }
+            attempt >= INSERT_ATTEMPTS -> main.post { onDone("Can't reach that text field — click it on the desktop, then try again") }
+            else -> {
+                if (attempt == 0) {
+                    Log.d(KEYS_TAG, "field not writable from here — clicking it to refocus the desktop")
+                    main.post {
+                        sink.button(displayId, p.x, p.y, primary = true, down = true)
+                        sink.button(displayId, p.x, p.y, primary = true, down = false)
+                    }
+                }
+                bg.postDelayed({ insertAttempt(text, submit, attempt + 1, onDone) }, REFOCUS_WAIT_MS)
+            }
+        }
+    }
+
+    /** Inserts [text] at the caret, re-reading the field first if it changed behind our back. */
+    private fun writeAtCaret(n: AccessibilityNodeInfo, text: String): Boolean {
+        val current = currentText(n)
+        if (buffer.toString() != current) {
+            buffer.setLength(0); buffer.append(current); caret = buffer.length
+        }
+        val c = caret.coerceIn(0, buffer.length)
+        buffer.insert(c, text)
+        if (setText(n, buffer.toString(), c + text.length)) { caret = c + text.length; return true }
+        buffer.delete(c, c + text.length) // not applied: keep the buffer true to the field
+        return false
     }
 
     /** Insert [insert] at the caret and push the buffer to the clicked desktop field. */
@@ -302,21 +362,23 @@ class GlassPadA11yService : AccessibilityService() {
      */
     fun enter() {
         if (lock.isLocked) return
-        bg.post {
-            val n = targetField() ?: return@post
-            // 1) A send/submit button on the field's own row (chat, search) — the most reliable
-            //    submit, and it needs no input focus.
-            if (clickSubmitNear(n)) { syncBuffer(); return@post }
-            // 2) Otherwise (e.g. a browser address bar with no button) give the field input focus,
-            //    let the IME bind, then fire its editor action. IME_ENTER's return value is
-            //    unreliable — it reports success even on an unfocused field where nothing happens —
-            //    so we always focus first and don't branch on it.
-            n.performAction(AccessibilityNodeInfo.ACTION_FOCUS)
-            bg.postDelayed({
-                targetField()?.performAction(AccessibilityNodeInfo.AccessibilityAction.ACTION_IME_ENTER.id)
-                syncBuffer()
-            }, IME_ENTER_RETRY_MS)
-        }
+        bg.post { targetField()?.let(::enterNow) }
+    }
+
+    /** Submits [n] — see [enter]. Worker thread. */
+    private fun enterNow(n: AccessibilityNodeInfo) {
+        // 1) A send/submit button on the field's own row (chat, search) — the most reliable
+        //    submit, and it needs no input focus.
+        if (clickSubmitNear(n)) { syncBuffer(); return }
+        // 2) Otherwise (e.g. a browser address bar with no button) give the field input focus,
+        //    let the IME bind, then fire its editor action. IME_ENTER's return value is
+        //    unreliable — it reports success even on an unfocused field where nothing happens —
+        //    so we always focus first and don't branch on it.
+        n.performAction(AccessibilityNodeInfo.ACTION_FOCUS)
+        bg.postDelayed({
+            field()?.performAction(AccessibilityNodeInfo.AccessibilityAction.ACTION_IME_ENTER.id)
+            syncBuffer()
+        }, IME_ENTER_RETRY_MS)
     }
 
     /** Click a send/submit button sitting on the same row as [field] (a chat composer / search bar). */
@@ -478,6 +540,9 @@ class GlassPadA11yService : AccessibilityService() {
         private const val NAV_TAG = "GlassPadNav"
         private const val SHELL_TAG = "GlassPadShell"
         private const val A11Y_TAG = "GlassPadA11y"
+        private const val KEYS_TAG = "GlassPadKeys"
+        private const val INSERT_ATTEMPTS = 4
+        private const val REFOCUS_WAIT_MS = 300L
         private const val SLOW_WINDOWS_MS = 200L
         private const val IME_ENTER_RETRY_MS = 180L
         private val SUBMIT_HINTS = listOf("send", "search", "go", "submit", "post", "reply", "return")
