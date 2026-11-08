@@ -42,6 +42,7 @@ class MainActivity : Activity() {
     private lateinit var rowsContainer: LinearLayout
     private lateinit var root: FrameLayout
     private lateinit var keyPreview: TextView
+    private lateinit var bottomStack: LinearLayout
 
     private val handler = Handler(Looper.getMainLooper())
     private val pollRunnable = Runnable { pollForService() }
@@ -138,6 +139,24 @@ class MainActivity : Activity() {
         val show = keyboardPanel.visibility != View.VISIBLE
         keyboardPanel.visibility = if (show) View.VISIBLE else View.GONE
         if (show) refreshKbStatus()
+    }
+
+    // ---- navigation (the taskbar's back / home / recents, on the phone) ----
+
+    private fun buildNavBar() = LinearLayout(this).apply {
+        orientation = LinearLayout.HORIZONTAL
+        setBackgroundColor(0xFF090D12.toInt())
+        for ((label, button) in listOf(
+            "◁" to DeskPadA11yService.NavButton.BACK,
+            "○" to DeskPadA11yService.NavButton.HOME,
+            "□" to DeskPadA11yService.NavButton.RECENTS,
+        )) {
+            addView(Button(this@MainActivity).apply {
+                text = label; textSize = 18f; setTextColor(MUTED); isAllCaps = false
+                setBackgroundColor(Color.TRANSPARENT)
+                setOnClickListener { v -> hapticTap(v); service?.navigate(button) }
+            }, LinearLayout.LayoutParams(0, WRAP, 1f))
+        }
     }
 
     private fun onKey(c: Char) {
@@ -355,8 +374,15 @@ class MainActivity : Activity() {
         statusBar = buildStatusBar()
         root.addView(statusBar, FrameLayout.LayoutParams(MATCH, WRAP).apply { gravity = Gravity.TOP })
 
+        // Bottom stack, like a taskbar: optional keyboard above an always-on nav row.
         keyboardPanel = buildKeyboardPanel()
-        root.addView(keyboardPanel, FrameLayout.LayoutParams(MATCH, WRAP).apply { gravity = Gravity.BOTTOM })
+        bottomStack = LinearLayout(this).apply {
+            orientation = LinearLayout.VERTICAL
+            setBackgroundColor(0xFF090D12.toInt())
+            addView(keyboardPanel)
+            addView(buildNavBar())
+        }
+        root.addView(bottomStack, FrameLayout.LayoutParams(MATCH, WRAP).apply { gravity = Gravity.BOTTOM })
 
         // Above the keyboard panel so the bubble is never clipped by it; below the lock overlay.
         keyPreview = makeKeyPreview()
@@ -365,13 +391,13 @@ class MainActivity : Activity() {
         lockOverlay = buildLockOverlay()
         root.addView(lockOverlay, FrameLayout.LayoutParams(MATCH, MATCH))
 
-        // Inset the top bar below the status bar / cutout, and the keyboard panel above the
+        // Inset the top bar below the status bar / cutout, and the bottom stack above the
         // navigation bar (3-button or gesture), so its bottom row is never hidden.
         root.setOnApplyWindowInsetsListener { _, insets ->
             val top = insets.getInsets(WindowInsets.Type.statusBars()).top
             val nav = insets.getInsets(WindowInsets.Type.navigationBars()).bottom
             statusBar.setPadding(dp(14), top + dp(8), dp(14), dp(10))
-            keyboardPanel.setPadding(dp(8), dp(8), dp(8), dp(12) + nav)
+            bottomStack.setPadding(0, 0, 0, nav)
             insets
         }
         return root

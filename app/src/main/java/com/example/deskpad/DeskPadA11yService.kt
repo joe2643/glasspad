@@ -33,8 +33,8 @@ import com.example.deskpad.core.PadFrame
  *
  * Input runs on the **main thread** — pad frames arrive there (touch events) and display callbacks
  * are delivered there — so [CursorController] is only ever touched from one thread and
- * `dispatchGesture` is called where the platform expects it. Window queries (the keyboard's)
- * run on one worker thread, because the system can take seconds to answer them.
+ * `dispatchGesture` is called where the platform expects it. Window queries (keyboard and
+ * nav) run on one worker thread, because the system can take seconds to answer them.
  */
 class DeskPadA11yService : AccessibilityService() {
 
@@ -133,6 +133,62 @@ class DeskPadA11yService : AccessibilityService() {
     }
 
     val isLocked: Boolean get() = lock.isLocked
+
+    /** The desktop taskbar's navigation buttons, by their Launcher view id. */
+    enum class NavButton(val viewId: String, val globalAction: Int) {
+        BACK("back", GLOBAL_ACTION_BACK),
+        HOME("home", GLOBAL_ACTION_HOME),
+        RECENTS("recent_apps", GLOBAL_ACTION_RECENTS),
+    }
+
+    /**
+     * Back / home / recents for the external desktop. performGlobalAction() always acts on the
+     * phone's own display (verified on Android 17), so this clicks the matching button on the
+     * desktop's taskbar through accessibility instead. The global action is only the fallback
+     * when no external display is connected.
+     */
+    fun navigate(button: NavButton) {
+        if (lock.isLocked) return
+        bg.post {
+            val displayId = targetDisplayId
+            if (displayId == INVALID) { performGlobalAction(button.globalAction); return@post }
+            val suffix = ":id/${button.viewId}"
+            val node = systemRoots(displayId).firstNotNullOfOrNull { root ->
+                findNode(root) { it.viewIdResourceName?.endsWith(suffix) == true }
+            }
+            if (node == null) {
+                Log.w(NAV_TAG, "no taskbar '${button.viewId}' on display $displayId — ${describeTaskbar(displayId)}")
+            } else {
+                node.performAction(AccessibilityNodeInfo.ACTION_CLICK)
+            }
+        }
+    }
+
+    /** Roots of the system windows (taskbar, status bar) on [displayId] — never app windows. */
+    private fun systemRoots(displayId: Int): List<AccessibilityNodeInfo> =
+        windows().get(displayId).orEmpty()
+            .filter { it.type == AccessibilityWindowInfo.TYPE_SYSTEM }
+            .mapNotNull { it.root }
+
+    private fun findNode(node: AccessibilityNodeInfo, match: (AccessibilityNodeInfo) -> Boolean): AccessibilityNodeInfo? {
+        if (match(node)) return node
+        for (i in 0 until node.childCount) {
+            node.getChild(i)?.let { child -> findNode(child, match)?.let { return it } }
+        }
+        return null
+    }
+
+    /** Diagnostics for when the taskbar's ids change: window types, and system clickables. */
+    private fun describeTaskbar(displayId: Int): String {
+        val windows = windows().get(displayId).orEmpty()
+        val clickables = mutableListOf<String>()
+        fun walk(n: AccessibilityNodeInfo) {
+            if (n.isClickable) clickables += "${n.viewIdResourceName}|${n.contentDescription}"
+            for (i in 0 until n.childCount) n.getChild(i)?.let(::walk)
+        }
+        systemRoots(displayId).forEach(::walk)
+        return "window types ${windows.map { it.type }}, system clickables $clickables"
+    }
 
     // ---- keyboard (accessibility edits on the focused desktop field) ----
     //
@@ -371,6 +427,7 @@ class DeskPadA11yService : AccessibilityService() {
 
     companion object {
         private const val INVALID = -1
+        private const val NAV_TAG = "DeskPadNav"
         private const val A11Y_TAG = "DeskPadA11y"
         private const val SLOW_WINDOWS_MS = 200L
         private const val IME_ENTER_RETRY_MS = 180L
