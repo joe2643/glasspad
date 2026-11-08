@@ -147,6 +147,16 @@ class MainActivity : Activity() {
         statusDot.setColor(color)
     }
 
+    /** Runs [block] with the accessibility service, or says why nothing happened. */
+    private fun withService(block: (GlassPadA11yService) -> Unit) {
+        val svc = service
+        if (svc == null) needService() else block(svc)
+    }
+
+    private fun needService() {
+        Toast.makeText(this, "Turn on GlassPad in Accessibility first — tap the status line", Toast.LENGTH_SHORT).show()
+    }
+
     private fun openAccessibilitySettings() {
         if (service == null) {
             startActivity(Intent(Settings.ACTION_ACCESSIBILITY_SETTINGS))
@@ -297,9 +307,9 @@ class MainActivity : Activity() {
         orientation = LinearLayout.HORIZONTAL
         setPadding(dp(8), dp(2), dp(8), dp(2))
         for ((icon, desc, onClick) in listOf<Triple<Int, String, () -> Unit>>(
-            Triple(R.drawable.ic_back, "Back", { service?.navigate(GlassPadA11yService.NavButton.BACK) }),
-            Triple(R.drawable.ic_home, "Home", { service?.navigate(GlassPadA11yService.NavButton.HOME) }),
-            Triple(R.drawable.ic_recents, "Recent apps", { service?.navigate(GlassPadA11yService.NavButton.RECENTS) }),
+            Triple(R.drawable.ic_back, "Back", { withService { it.navigate(GlassPadA11yService.NavButton.BACK) } }),
+            Triple(R.drawable.ic_home, "Home", { withService { it.navigate(GlassPadA11yService.NavButton.HOME) } }),
+            Triple(R.drawable.ic_recents, "Recent apps", { withService { it.navigate(GlassPadA11yService.NavButton.RECENTS) } }),
             Triple(R.drawable.ic_fullscreen, "Fullscreen", { toggleFullscreen() }),
         )) {
             addView(iconButton(icon, desc) { onClick() }, LinearLayout.LayoutParams(0, dp(52), 1f))
@@ -307,7 +317,7 @@ class MainActivity : Activity() {
     }
 
     private fun toggleFullscreen() {
-        val svc = service ?: return
+        val svc = service ?: return needService()
         Log.d("GlassPadShell", "fullscreen pressed")
         if (!DesktopShell.isGranted(this)) {
             Toast.makeText(this, "Fullscreen needs a one-time grant from a PC:\n" +
@@ -618,7 +628,7 @@ class MainActivity : Activity() {
 
         scaleButton = iconButton(R.drawable.ic_monitor, "Desktop scale") { toggleScale() }
         kbButton = iconButton(R.drawable.ic_keyboard, "Keyboard") { toggleKeyboard() }
-        lockButton = iconButton(R.drawable.ic_lock_open, "Lock touchpad") { service?.setLocked(true) }
+        lockButton = iconButton(R.drawable.ic_lock_open, "Lock touchpad") { withService { it.setLocked(true) } }
         for (b in listOf(scaleButton, kbButton, lockButton)) {
             bar.addView(b, LinearLayout.LayoutParams(dp(48), dp(48)))
         }
