@@ -1,31 +1,32 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- GlassPad: a pair of glasses above a touchpad. Drawn inside the adaptive-icon safe zone
+     (the central 66dp of 108dp); also used as the monochrome (themed) icon. -->
 <vector xmlns:android="http://schemas.android.com/apk/res/android"
     android:width="108dp"
     android:height="108dp"
     android:viewportWidth="108"
     android:viewportHeight="108">
 
-    <!-- Mouse: a capsule outline with a scroll-wheel tick -->
+    <!-- Glasses: two rounded lenses and the bridge -->
     <path
-        android:strokeColor="#FFFFFF"
-        android:strokeWidth="3"
+        android:pathData="M33,31 H45 A6,6 0 0 1 51,37 V41 A8,8 0 0 1 43,49 H35 A8,8 0 0 1 27,41 V37 A6,6 0 0 1 33,31 Z M63,31 H75 A6,6 0 0 1 81,37 V41 A8,8 0 0 1 73,49 H65 A8,8 0 0 1 57,41 V37 A6,6 0 0 1 63,31 Z M51,37 Q54,34 57,37"
         android:fillColor="#00000000"
-        android:pathData="M42,32 A12,12 0 0 1 66,32 L66,40 A12,12 0 0 1 42,40 L42,32 Z" />
-    <path
-        android:strokeColor="#FFFFFF"
-        android:strokeWidth="3"
+        android:strokeColor="#FFFFFFFF"
+        android:strokeWidth="3.5"
         android:strokeLineCap="round"
-        android:fillColor="#00000000"
-        android:pathData="M54,24 L54,30" />
+        android:strokeLineJoin="round" />
 
-    <!-- Keyboard: body outline -->
+    <!-- Touchpad with its two click areas -->
     <path
-        android:strokeColor="#FFFFFF"
-        android:strokeWidth="3"
+        android:pathData="M38,57 H70 A6,6 0 0 1 76,63 V75 A6,6 0 0 1 70,81 H38 A6,6 0 0 1 32,75 V63 A6,6 0 0 1 38,57 Z M32,73 H76 M54,73 V81"
         android:fillColor="#00000000"
-        android:pathData="M27,58 L81,58 A5,5 0 0 1 86,63 L86,79 A5,5 0 0 1 81,84 L27,84 A5,5 0 0 1 22,79 L22,63 A5,5 0 0 1 27,58 Z" />
+        android:strokeColor="#FFFFFFFF"
+        android:strokeWidth="3.5"
+        android:strokeLineCap="round"
+        android:strokeLineJoin="round" />
 
-    <!-- Keyboard: keys + spacebar -->
+    <!-- Cursor dot on the pad -->
     <path
-        android:fillColor="#FFFFFF"
-        android:pathData="M27,63 l5,0 0,4 -5,0 Z M34,63 l5,0 0,4 -5,0 Z M41,63 l5,0 0,4 -5,0 Z M48,63 l5,0 0,4 -5,0 Z M55,63 l5,0 0,4 -5,0 Z M62,63 l5,0 0,4 -5,0 Z M69,63 l5,0 0,4 -5,0 Z M76,63 l5,0 0,4 -5,0 Z M27,70 l5,0 0,4 -5,0 Z M34,70 l5,0 0,4 -5,0 Z M41,70 l5,0 0,4 -5,0 Z M48,70 l5,0 0,4 -5,0 Z M55,70 l5,0 0,4 -5,0 Z M62,70 l5,0 0,4 -5,0 Z M69,70 l5,0 0,4 -5,0 Z M76,70 l5,0 0,4 -5,0 Z M42,77 l24,0 0,3 -24,0 Z" />
+        android:pathData="M60,65 m-2.5,0 a2.5,2.5 0 1 0 5,0 a2.5,2.5 0 1 0 -5,0"
+        android:fillColor="#FFFFFFFF" />
 </vector>

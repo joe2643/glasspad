@@ -1,0 +1,5 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <!-- Shown under GlassPad in Settings → Accessibility. -->
+    <string name="a11y_description">Lets GlassPad move a cursor, click, scroll and type on your external display (Desktop mode), using your phone as the trackpad and keyboard. GlassPad has no internet permission: nothing leaves your phone.</string>
+</resources>

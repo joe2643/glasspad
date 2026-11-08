@@ -1,9 +1,10 @@
 package io.github.joe2643.glasspad
 
+import android.animation.ValueAnimator
 import android.app.Activity
 import android.content.Intent
-import android.graphics.Color
 import android.graphics.Typeface
+import android.graphics.drawable.ClipDrawable
 import android.graphics.drawable.GradientDrawable
 import android.hardware.display.DisplayManager
 import android.os.Bundle
@@ -20,16 +21,20 @@ import android.view.WindowManager
 import android.view.accessibility.AccessibilityNodeInfo
 import android.widget.Button
 import android.widget.FrameLayout
+import android.widget.ImageButton
+import android.widget.ImageView
 import android.widget.LinearLayout
 import android.widget.SeekBar
 import android.widget.TextView
 import android.widget.Toast
+import io.github.joe2643.glasspad.Ui.tint
 import io.github.joe2643.glasspad.core.DesktopScale
 import io.github.joe2643.glasspad.core.DisplayInfo
 
 /**
- * Option A — full-bleed trackpad. Touches drive [GlassPadA11yService] (cursor + gestures on the
- * external display).
+ * The phone UI: a header (status + panel toggles), the trackpad card that drives
+ * [GlassPadA11yService] (cursor + gestures on the external display), and a bottom sheet holding the
+ * optional keyboard / desktop-scale panel above the always-on navigation row.
  *
  * Keyboard: on-screen keys (Buttons, which never take input focus, so the desktop field you clicked
  * stays selected) that edit that focused field's text via the accessibility service.
@@ -38,17 +43,21 @@ class MainActivity : Activity() {
 
     private lateinit var touchpad: TouchpadView
     private lateinit var statusText: TextView
-    private lateinit var statusDot: View
-    private lateinit var lockButton: Button
+    private lateinit var statusDot: GradientDrawable
+    private lateinit var scaleButton: ImageButton
+    private lateinit var kbButton: ImageButton
+    private lateinit var lockButton: ImageButton
     private lateinit var lockOverlay: FrameLayout
+    private lateinit var holdLevel: ClipDrawable
     private lateinit var keyboardPanel: LinearLayout
     private lateinit var kbStatus: TextView
-    private lateinit var statusBar: LinearLayout
+    private lateinit var header: LinearLayout
     private lateinit var rowsContainer: LinearLayout
     private lateinit var root: FrameLayout
     private lateinit var keyPreview: TextView
-    private lateinit var bottomStack: LinearLayout
+    private lateinit var bottomSheet: LinearLayout
     private lateinit var scalePanel: LinearLayout
+    private lateinit var scaleValue: TextView
     private lateinit var scaleStatus: TextView
     private lateinit var scaleSeek: SeekBar
     private val scaleControls = mutableListOf<View>()
@@ -57,6 +66,7 @@ class MainActivity : Activity() {
     private val handler = Handler(Looper.getMainLooper())
     private val pollRunnable = Runnable { pollForService() }
     private var unlockHold: Runnable? = null
+    private var holdAnim: ValueAnimator? = null
     private var wiredService: GlassPadA11yService? = null
     private var shiftOn = false
     private var page = LETTERS // LETTERS, SYMBOLS, or MORE_SYMBOLS
@@ -115,51 +125,60 @@ class MainActivity : Activity() {
                 svc.onState = { renderState(it) }
             }
         }
-        if (svc == null) {
-            statusDot.setBackgroundColor(WARN)
-            statusText.text = "Tap here to enable GlassPad in Accessibility"
-        }
+        if (svc == null) setStatus("Tap to turn on GlassPad in Accessibility", Ui.WARN)
         handler.postDelayed(pollRunnable, POLL_MS)
     }
 
     private fun renderState(s: GlassPadA11yService.State) {
-        val ready = s.external != null
-        statusDot.setBackgroundColor(if (ready) GOOD else WARN)
-        statusText.text = when {
-            s.external == null -> "Enabled · connect a display (Desktop mode)"
-            else -> "Ready · display ${s.external.id} · ${s.external.width}×${s.external.height}"
-        }
-        lockButton.text = if (s.locked) "🔒" else "🔓"
-        lockButton.setTextColor(if (s.locked) WARN else MUTED)
+        val ext = s.external
+        if (ext == null) setStatus("Connect a display in Desktop mode", Ui.WARN)
+        else setStatus("Ready · ${ext.width}×${ext.height}", Ui.GOOD)
+        lockButton.setImageResource(if (s.locked) R.drawable.ic_lock else R.drawable.ic_lock_open)
+        lockButton.imageTintList = tint(if (s.locked) Ui.WARN else Ui.MUTED)
+        lockButton.contentDescription = if (s.locked) "Touchpad locked" else "Lock touchpad"
         lockOverlay.visibility = if (s.locked) View.VISIBLE else View.GONE
-        external = s.external
+        if (!s.locked) resetHold()
+        external = ext
         if (scalePanel.visibility == View.VISIBLE) refreshScale()
+    }
+
+    private fun setStatus(text: String, color: Int) {
+        statusText.text = text
+        statusDot.setColor(color)
     }
 
     private fun openAccessibilitySettings() {
         if (service == null) {
             startActivity(Intent(Settings.ACTION_ACCESSIBILITY_SETTINGS))
-            Toast.makeText(this, "Enable “GlassPad”, then return here", Toast.LENGTH_LONG).show()
+            Toast.makeText(this, "Turn on “GlassPad”, then come back", Toast.LENGTH_LONG).show()
         }
     }
 
-    // ---- keyboard ----
+    // ---- panels (keyboard / desktop scale share the bottom sheet) ----
 
-    private fun locked() = service?.isLocked == true
+    /** Shows [panel] (or none) and lights up its header button. */
+    private fun showPanel(panel: View?) {
+        for ((p, button) in listOf(keyboardPanel to kbButton, scalePanel to scaleButton)) {
+            val on = p === panel
+            p.visibility = if (on) View.VISIBLE else View.GONE
+            button.imageTintList = tint(if (on) Ui.ACCENT else Ui.MUTED)
+            button.background = Ui.borderless(if (on) Ui.ACCENT_SOFT else null)
+        }
+    }
 
     private fun toggleKeyboard() {
         val show = keyboardPanel.visibility != View.VISIBLE
-        keyboardPanel.visibility = if (show) View.VISIBLE else View.GONE
-        if (show) { scalePanel.visibility = View.GONE; refreshKbStatus() }
+        showPanel(if (show) keyboardPanel else null)
+        if (show) refreshKbStatus()
     }
-
-    // ---- desktop scale (external display density) ----
 
     private fun toggleScale() {
         val show = scalePanel.visibility != View.VISIBLE
-        scalePanel.visibility = if (show) View.VISIBLE else View.GONE
-        if (show) { keyboardPanel.visibility = View.GONE; refreshScale() }
+        showPanel(if (show) scalePanel else null)
+        if (show) refreshScale()
     }
+
+    // ---- desktop scale (external display density) ----
 
     private fun currentDpi(displayId: Int): Int? =
         getSystemService(DisplayManager::class.java).getDisplay(displayId)
@@ -169,35 +188,40 @@ class MainActivity : Activity() {
         val ext = external
         val dpi = ext?.let { currentDpi(it.id) }
         when {
-            ext == null || dpi == null -> setScale("connect a display first", MUTED, enabled = false)
-            !DisplayDensity.isGranted(this) ->
-                setScale("one-time setup, from a PC:\n${DisplayDensity.GRANT_COMMAND}", WARN, enabled = false)
+            ext == null || dpi == null -> setScale("", "Connect a display first", Ui.MUTED, enabled = false)
+            !DisplayDensity.isGranted(this) -> setScale(
+                "", "One-time setup, from a PC:\n${DisplayDensity.GRANT_COMMAND}", Ui.WARN,
+                enabled = false, mono = true,
+            )
             else -> {
                 scaleSeek.progress = DesktopScale.positionOf(dpi)
-                setScale(describeScale(ext, dpi), TEXT, enabled = true)
+                setScale("$dpi dpi", describeScale(ext, dpi), Ui.MUTED, enabled = true)
             }
         }
     }
 
     private fun describeScale(ext: DisplayInfo, dpi: Int): String {
         val (w, h) = DesktopScale.workspaceDp(ext.width, ext.height, dpi)
-        return "display ${ext.id} · $dpi dpi · desktop ${w}×$h dp"
+        return "Desktop ${w}×$h dp · smaller fits more"
     }
 
-    private fun setScale(text: String, color: Int, enabled: Boolean) {
-        scaleStatus.text = text; scaleStatus.setTextColor(color)
+    private fun setScale(value: String, text: String, color: Int, enabled: Boolean, mono: Boolean = false) {
+        scaleValue.text = value
+        scaleStatus.text = text
+        scaleStatus.setTextColor(color)
+        scaleStatus.typeface = if (mono) Typeface.MONOSPACE else Typeface.DEFAULT
         scaleControls.forEach { it.isEnabled = enabled; it.alpha = if (enabled) 1f else 0.4f }
     }
 
     private fun applyScale(dpi: Int?) {
         val ext = external ?: return
-        scaleStatus.text = if (dpi == null) "resetting…" else "applying $dpi dpi…"
+        scaleStatus.text = if (dpi == null) "Resetting…" else "Applying $dpi dpi…"
         Thread {
             val result = if (dpi == null) DisplayDensity.reset(ext.id) else DisplayDensity.set(ext.id, dpi)
             runOnUiThread {
                 val error = result.exceptionOrNull()
                 if (error == null) refreshScale()
-                else setScale("failed: ${rootCause(error)}", WARN, enabled = true)
+                else setScale("", "Failed: ${rootCause(error)}", Ui.WARN, enabled = true)
             }
         }.start()
     }
@@ -217,35 +241,49 @@ class MainActivity : Activity() {
     private fun buildScalePanel(): LinearLayout {
         val panel = LinearLayout(this).apply {
             orientation = LinearLayout.VERTICAL
-            setBackgroundColor(0xFF090D12.toInt())
-            setPadding(dp(14), dp(10), dp(14), dp(12))
+            setPadding(dp(18), dp(16), dp(18), dp(8))
             visibility = View.GONE
         }
-        panel.addView(TextView(this).apply {
-            text = "Desktop scale · smaller = more room"; setTextColor(TEXT); textSize = 13f
+        panel.addView(LinearLayout(this).apply {
+            orientation = LinearLayout.HORIZONTAL
+            gravity = Gravity.CENTER_VERTICAL
+            addView(TextView(this@MainActivity).apply {
+                text = "Desktop scale"; setTextColor(Ui.TEXT); textSize = 15f; typeface = MEDIUM
+            }, LinearLayout.LayoutParams(0, WRAP, 1f))
+            scaleValue = TextView(this@MainActivity).apply {
+                setTextColor(Ui.ACCENT); textSize = 15f; typeface = MEDIUM
+            }
+            addView(scaleValue)
         })
         scaleStatus = TextView(this).apply {
-            setTextColor(MUTED); textSize = 11f; typeface = Typeface.MONOSPACE
+            setTextColor(Ui.MUTED); textSize = 12f
             setPadding(0, dp(4), 0, dp(4))
         }
         panel.addView(scaleStatus)
         scaleSeek = SeekBar(this).apply {
             max = DesktopScale.positions - 1
+            progressTintList = tint(Ui.ACCENT)
+            thumbTintList = tint(Ui.ACCENT)
+            progressBackgroundTintList = tint(Ui.FAINT)
             setOnSeekBarChangeListener(object : SeekBar.OnSeekBarChangeListener {
                 override fun onProgressChanged(sb: SeekBar, p: Int, fromUser: Boolean) {
                     // Preview only: applying relayouts the whole desktop, so wait for release.
                     val ext = external
-                    if (fromUser && ext != null) scaleStatus.text = describeScale(ext, DesktopScale.dpiAt(p))
+                    if (fromUser && ext != null) {
+                        val dpi = DesktopScale.dpiAt(p)
+                        scaleValue.text = "$dpi dpi"
+                        scaleStatus.text = describeScale(ext, dpi)
+                    }
                 }
                 override fun onStartTrackingTouch(sb: SeekBar) {}
                 override fun onStopTrackingTouch(sb: SeekBar) = applyScale(DesktopScale.dpiAt(sb.progress))
             })
         }
-        panel.addView(scaleSeek, LinearLayout.LayoutParams(MATCH, WRAP).apply { topMargin = dp(4) })
+        panel.addView(scaleSeek, LinearLayout.LayoutParams(MATCH, WRAP).apply { topMargin = dp(6); bottomMargin = dp(6) })
         val buttons = row {
-            addView(specialKey("smaller", 1f) { stepScale(-1) })
-            addView(specialKey("bigger", 1f) { stepScale(+1) })
-            addView(specialKey("reset", 1f) { applyScale(null) })
+            addView(chip("Smaller") { stepScale(-1) })
+            addView(chip("Bigger") { stepScale(+1) })
+            addView(chip("Reset") { applyScale(null) })
         }
         panel.addView(buttons)
         scaleControls += scaleSeek
@@ -253,32 +291,24 @@ class MainActivity : Activity() {
         return panel
     }
 
-    // ---- navigation (the taskbar's back / home / recents, on the phone) ----
+    // ---- navigation (the desktop taskbar's back / home / recents, plus fullscreen) ----
 
     private fun buildNavBar() = LinearLayout(this).apply {
         orientation = LinearLayout.HORIZONTAL
-        setBackgroundColor(0xFF090D12.toInt())
-        for ((label, button) in listOf(
-            "◁" to GlassPadA11yService.NavButton.BACK,
-            "○" to GlassPadA11yService.NavButton.HOME,
-            "□" to GlassPadA11yService.NavButton.RECENTS,
+        setPadding(dp(8), dp(2), dp(8), dp(2))
+        for ((icon, desc, onClick) in listOf<Triple<Int, String, () -> Unit>>(
+            Triple(R.drawable.ic_back, "Back", { service?.navigate(GlassPadA11yService.NavButton.BACK) }),
+            Triple(R.drawable.ic_home, "Home", { service?.navigate(GlassPadA11yService.NavButton.HOME) }),
+            Triple(R.drawable.ic_recents, "Recent apps", { service?.navigate(GlassPadA11yService.NavButton.RECENTS) }),
+            Triple(R.drawable.ic_fullscreen, "Fullscreen", { toggleFullscreen() }),
         )) {
-            addView(Button(this@MainActivity).apply {
-                text = label; textSize = 18f; setTextColor(MUTED); isAllCaps = false
-                setBackgroundColor(Color.TRANSPARENT)
-                setOnClickListener { v -> hapticTap(v); service?.navigate(button) }
-            }, LinearLayout.LayoutParams(0, WRAP, 1f))
+            addView(iconButton(icon, desc) { onClick() }, LinearLayout.LayoutParams(0, dp(52), 1f))
         }
-        addView(Button(this@MainActivity).apply {
-            text = "⛶"; textSize = 18f; setTextColor(MUTED); isAllCaps = false
-            setBackgroundColor(Color.TRANSPARENT)
-            setOnClickListener { v -> hapticTap(v); toggleFullscreen() }
-        }, LinearLayout.LayoutParams(0, WRAP, 1f))
     }
 
     private fun toggleFullscreen() {
         val svc = service ?: return
-        Log.d("GlassPadShell", "⛶ pressed")
+        Log.d("GlassPadShell", "fullscreen pressed")
         if (!DesktopShell.isGranted(this)) {
             Toast.makeText(this, "Fullscreen needs a one-time grant from a PC:\n" +
                 DesktopShell.GRANT_COMMANDS.joinToString("\n"), Toast.LENGTH_LONG).show()
@@ -290,6 +320,10 @@ class MainActivity : Activity() {
             }
         }
     }
+
+    // ---- keyboard ----
+
+    private fun locked() = service?.isLocked == true
 
     private fun onKey(c: Char) {
         if (locked()) return
@@ -303,8 +337,8 @@ class MainActivity : Activity() {
     private fun refreshKbStatus() {
         if (!::kbStatus.isInitialized) return
         val svc = service
-        if (svc == null) { setKb("enable GlassPad accessibility first", WARN); return }
-        svc.keyboardDiagnostics { diag -> setKb(diag, if (diag.startsWith("●")) GOOD else WARN) }
+        if (svc == null) { setKb("turn on GlassPad in Accessibility first", Ui.WARN); return }
+        svc.keyboardDiagnostics { diag -> setKb(diag, if (diag.startsWith("●")) Ui.GOOD else Ui.WARN) }
     }
 
     private fun setKb(text: String, color: Int) {
@@ -314,20 +348,19 @@ class MainActivity : Activity() {
     private fun buildKeyboardPanel(): LinearLayout {
         val panel = LinearLayout(this).apply {
             orientation = LinearLayout.VERTICAL
-            setBackgroundColor(0xFF090D12.toInt())
-            setPadding(dp(8), dp(8), dp(8), dp(12))
+            setPadding(dp(5), dp(10), dp(5), dp(4))
             visibility = View.GONE
         }
         kbStatus = TextView(this).apply {
             text = "click a desktop text field first"
-            setTextColor(MUTED); textSize = 11f; typeface = Typeface.MONOSPACE
-            setPadding(dp(6), 0, 0, dp(2))
+            setTextColor(Ui.MUTED); textSize = 11f
+            setPadding(dp(8), 0, dp(8), dp(4))
         }
         panel.addView(kbStatus)
+        panel.addView(actionsRow())
         rowsContainer = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL }
         panel.addView(rowsContainer)
         populateRows()
-        panel.addView(actionsRow())
         return panel
     }
 
@@ -358,7 +391,7 @@ class MainActivity : Activity() {
                 rowsContainer.addView(keyRow("qwertyuiop"))
                 rowsContainer.addView(centeredKeyRow("asdfghjkl"))
                 rowsContainer.addView(row {
-                    shiftKey = specialKey("⇧", 1.5f) { shiftOn = !shiftOn; refreshShift() }
+                    shiftKey = specialKey("⇧", 1.5f, glyph = true) { shiftOn = !shiftOn; refreshShift() }
                     addView(shiftKey)
                     for (c in "zxcvbnm") addView(charKey(c))
                     addView(backspaceKey())
@@ -377,18 +410,19 @@ class MainActivity : Activity() {
             addView(specialKey("ABC", 1.5f) { page = LETTERS; populateRows() })
         }
         addView(charKey(if (page == MORE_SYMBOLS) '<' else ','))
-        addView(specialKey("space", 5f) { onKey(' ') })
+        addView(key("space", 5f, Ui.KEY, Ui.MUTED, 13f) { onKey(' ') })
         addView(charKey(if (page == MORE_SYMBOLS) '>' else '.'))
-        addView(specialKey("⏎", 1.5f) { if (!locked()) service?.enter() })
+        addView(key("⏎", 1.5f, Ui.ACCENT, Ui.ON_ACCENT, 18f) { if (!locked()) service?.enter() })
     }
 
-    private fun backspaceKey() = specialKey("⌫", 1.5f) { if (!locked()) service?.backspace() }
+    private fun backspaceKey() = specialKey("⌫", 1.5f, glyph = true) { if (!locked()) service?.backspace() }
 
+    /** Clipboard shortcuts above the keys, like Gboard's suggestion strip. */
     private fun actionsRow() = row {
-        addView(specialKey("Copy", 1f) { if (!locked()) service?.editAction(AccessibilityNodeInfo.ACTION_COPY) })
-        addView(specialKey("Paste", 1f) { if (!locked()) service?.editAction(AccessibilityNodeInfo.ACTION_PASTE) })
-        addView(specialKey("Cut", 1f) { if (!locked()) service?.editAction(AccessibilityNodeInfo.ACTION_CUT) })
-        addView(specialKey("All", 1f) { if (!locked()) service?.selectAll() })
+        addView(chip("Copy") { if (!locked()) service?.editAction(AccessibilityNodeInfo.ACTION_COPY) })
+        addView(chip("Paste") { if (!locked()) service?.editAction(AccessibilityNodeInfo.ACTION_PASTE) })
+        addView(chip("Cut") { if (!locked()) service?.editAction(AccessibilityNodeInfo.ACTION_CUT) })
+        addView(chip("Select all") { if (!locked()) service?.selectAll() })
     }
 
     private val letterKeys = mutableListOf<Button>()
@@ -410,18 +444,31 @@ class MainActivity : Activity() {
 
     private fun row(block: LinearLayout.() -> Unit) = LinearLayout(this).apply {
         orientation = LinearLayout.HORIZONTAL
-        layoutParams = LinearLayout.LayoutParams(MATCH, WRAP).apply { topMargin = dp(4) }
+        layoutParams = LinearLayout.LayoutParams(MATCH, WRAP).apply { topMargin = dp(6) }
         block()
     }
 
+    /** A flat rounded key that ripples; the base of every key, chip and pill here. */
+    private fun key(
+        label: String, weight: Float, color: Int, textColor: Int, size: Float,
+        height: Int = KEY_HEIGHT, onClick: () -> Unit,
+    ) = Button(this).apply {
+        text = label; textSize = size; setTextColor(textColor); isAllCaps = false
+        stateListAnimator = null
+        minHeight = 0; minimumHeight = 0; minWidth = 0; minimumWidth = 0
+        setPadding(0, 0, 0, 0)
+        background = Ui.pressable(color, dp(8).toFloat())
+        layoutParams = LinearLayout.LayoutParams(0, dp(height), weight).apply {
+            marginStart = dp(3); marginEnd = dp(3)
+        }
+        setOnClickListener { v -> hapticTap(v); onClick() }
+    }
+
     private fun charKey(c: Char): Button {
-        val b = Button(this).apply {
-            text = c.toString(); textSize = 13f; setTextColor(TEXT); isAllCaps = false
-            setBackgroundColor(0xFF1B2531.toInt())
-            layoutParams = LinearLayout.LayoutParams(0, WRAP, 1f).apply { marginEnd = dp(3) }
-            setPadding(0, dp(10), 0, dp(10))
-            setOnClickListener { onKey(c) }
+        val b = key(c.toString(), 1f, Ui.KEY, Ui.TEXT, 19f) { onKey(c) }.apply {
             // Gboard-style feedback: haptic + a magnified character bubble while the key is held.
+            // (The click listener's own haptic is replaced: it fires on DOWN here.)
+            setOnClickListener { onKey(c) }
             setOnTouchListener { v, e ->
                 when (e.actionMasked) {
                     MotionEvent.ACTION_DOWN -> { hapticTap(v); showKeyPreview(v, displayLabel(c)) }
@@ -438,13 +485,11 @@ class MainActivity : Activity() {
     private fun displayLabel(c: Char) =
         if (shiftOn && c in 'a'..'z') c.uppercaseChar().toString() else c.toString()
 
-    private fun specialKey(label: String, weight: Float, onClick: () -> Unit) = Button(this).apply {
-        text = label; textSize = 12f; setTextColor(MUTED); isAllCaps = false
-        setBackgroundColor(0xFF141B24.toInt())
-        layoutParams = LinearLayout.LayoutParams(0, WRAP, weight).apply { marginEnd = dp(3) }
-        setPadding(0, dp(10), 0, dp(10))
-        setOnClickListener { v -> hapticTap(v); onClick() }
-    }
+    private fun specialKey(label: String, weight: Float, glyph: Boolean = false, onClick: () -> Unit) =
+        key(label, weight, Ui.KEY_SPECIAL, Ui.MUTED, if (glyph) 19f else 14f, onClick = onClick)
+
+    private fun chip(label: String, onClick: () -> Unit) =
+        key(label, 1f, Ui.KEY_SPECIAL, Ui.MUTED, 13f, height = CHIP_HEIGHT, onClick = onClick)
 
     private fun hapticTap(v: View) {
         v.performHapticFeedback(
@@ -456,14 +501,12 @@ class MainActivity : Activity() {
     // ---- key-preview bubble (Gboard-style) ----
 
     private fun makeKeyPreview() = TextView(this).apply {
-        setTextColor(TEXT); textSize = 26f; isAllCaps = false; gravity = Gravity.CENTER
-        setPadding(dp(16), dp(6), dp(16), dp(10))
+        setTextColor(Ui.TEXT); textSize = 28f; isAllCaps = false; gravity = Gravity.CENTER
+        minWidth = dp(52)
+        setPadding(dp(14), dp(6), dp(14), dp(10))
         visibility = View.GONE
         elevation = dp(8).toFloat()
-        background = GradientDrawable().apply {
-            setColor(0xFF2A3646.toInt()); cornerRadius = dp(10).toFloat()
-            setStroke(dp(1), 0xFF3D4C5E.toInt())
-        }
+        background = Ui.rounded(Ui.PREVIEW, dp(12).toFloat())
         layoutParams = FrameLayout.LayoutParams(WRAP, WRAP)
     }
 
@@ -488,111 +531,165 @@ class MainActivity : Activity() {
 
     private fun refreshShift() {
         letterKeys.forEach { it.text = if (shiftOn) it.text.toString().uppercase() else it.text.toString().lowercase() }
-        // Filled key when shift is engaged, outline when not — the Gboard cue.
+        // Lit key when shift is engaged — the Gboard cue.
         shiftKey?.apply {
             text = if (shiftOn) "⬆" else "⇧"
-            setBackgroundColor(if (shiftOn) SHIFT_ON else 0xFF141B24.toInt())
+            setTextColor(if (shiftOn) Ui.ACCENT else Ui.MUTED)
+            background = Ui.pressable(if (shiftOn) Ui.ACCENT_SOFT else Ui.KEY_SPECIAL, dp(8).toFloat())
         }
     }
 
     // ---- UI scaffold ----
 
     private fun buildUi(): View {
-        root = FrameLayout(this).apply { setBackgroundColor(APP_BG) }
+        root = FrameLayout(this).apply { setBackgroundColor(Ui.BG) }
 
-        touchpad = TouchpadView(this).apply { setBackgroundColor(PAD_BG) }
-        root.addView(touchpad, FrameLayout.LayoutParams(MATCH, MATCH))
+        header = buildHeader()
+        touchpad = TouchpadView(this).apply {
+            background = Ui.rounded(Ui.PAD, dp(24).toFloat(), dp(1), Ui.PAD_BORDER)
+        }
 
-        statusBar = buildStatusBar()
-        root.addView(statusBar, FrameLayout.LayoutParams(MATCH, WRAP).apply { gravity = Gravity.TOP })
-
-        // Bottom stack, like a taskbar: optional keyboard / scale panel above an always-on nav row.
+        // Bottom sheet: optional keyboard / scale panel above an always-on nav row.
         keyboardPanel = buildKeyboardPanel()
         scalePanel = buildScalePanel()
-        bottomStack = LinearLayout(this).apply {
+        bottomSheet = LinearLayout(this).apply {
             orientation = LinearLayout.VERTICAL
-            setBackgroundColor(0xFF090D12.toInt())
+            background = Ui.sheet(Ui.SHEET, dp(20).toFloat())
             addView(keyboardPanel)
             addView(scalePanel)
             addView(buildNavBar())
         }
-        root.addView(bottomStack, FrameLayout.LayoutParams(MATCH, WRAP).apply { gravity = Gravity.BOTTOM })
 
-        // Above the keyboard panel so the bubble is never clipped by it; below the lock overlay.
+        val column = LinearLayout(this).apply {
+            orientation = LinearLayout.VERTICAL
+            addView(header, LinearLayout.LayoutParams(MATCH, WRAP))
+            addView(touchpad, LinearLayout.LayoutParams(MATCH, 0, 1f).apply {
+                marginStart = dp(12); marginEnd = dp(12); bottomMargin = dp(12)
+            })
+            addView(bottomSheet, LinearLayout.LayoutParams(MATCH, WRAP))
+        }
+        root.addView(column, FrameLayout.LayoutParams(MATCH, MATCH))
+
+        // Above everything else so the bubble is never clipped; below the lock overlay.
         keyPreview = makeKeyPreview()
         root.addView(keyPreview)
 
         lockOverlay = buildLockOverlay()
         root.addView(lockOverlay, FrameLayout.LayoutParams(MATCH, MATCH))
 
-        // Inset the top bar below the status bar / cutout, and the bottom stack above the
+        // Inset the header below the status bar / cutout, and the bottom sheet above the
         // navigation bar (3-button or gesture), so its bottom row is never hidden.
         root.setOnApplyWindowInsetsListener { _, insets ->
             val top = insets.getInsets(WindowInsets.Type.statusBars()).top
             val nav = insets.getInsets(WindowInsets.Type.navigationBars()).bottom
-            statusBar.setPadding(dp(14), top + dp(8), dp(14), dp(10))
-            bottomStack.setPadding(0, 0, 0, nav)
+            header.setPadding(dp(18), top + dp(10), dp(8), dp(12))
+            bottomSheet.setPadding(0, 0, 0, nav)
             insets
         }
         return root
     }
 
-    private fun buildStatusBar(): LinearLayout {
+    private fun buildHeader(): LinearLayout {
         val bar = LinearLayout(this).apply {
             orientation = LinearLayout.HORIZONTAL
             gravity = Gravity.CENTER_VERTICAL
-            setPadding(dp(14), dp(14), dp(14), dp(10))
+        }
+        val titleBlock = LinearLayout(this).apply {
+            orientation = LinearLayout.VERTICAL
             setOnClickListener { openAccessibilitySettings() }
         }
-        statusDot = View(this)
-        bar.addView(statusDot, LinearLayout.LayoutParams(dp(8), dp(8)).apply { rightMargin = dp(8) })
-        statusText = TextView(this).apply {
-            text = "Starting…"; setTextColor(TEXT); textSize = 12f; typeface = Typeface.MONOSPACE
+        titleBlock.addView(TextView(this).apply {
+            text = "GlassPad"; setTextColor(Ui.TEXT); textSize = 20f; typeface = MEDIUM
+        })
+        val statusRow = LinearLayout(this).apply {
+            orientation = LinearLayout.HORIZONTAL
+            gravity = Gravity.CENTER_VERTICAL
+            setPadding(0, dp(2), 0, 0)
         }
-        bar.addView(statusText, LinearLayout.LayoutParams(0, WRAP, 1f))
-        bar.addView(iconButton("🖥") { toggleScale() })
-        bar.addView(iconButton("⌨") { toggleKeyboard() })
-        lockButton = iconButton("🔓") { service?.setLocked(true) }
-        bar.addView(lockButton)
+        statusDot = Ui.oval(Ui.WARN)
+        statusRow.addView(View(this).apply { background = statusDot },
+            LinearLayout.LayoutParams(dp(7), dp(7)).apply { marginEnd = dp(7) })
+        statusText = TextView(this).apply {
+            text = "Starting…"; setTextColor(Ui.MUTED); textSize = 13f; maxLines = 1
+        }
+        statusRow.addView(statusText)
+        titleBlock.addView(statusRow)
+        bar.addView(titleBlock, LinearLayout.LayoutParams(0, WRAP, 1f))
+
+        scaleButton = iconButton(R.drawable.ic_monitor, "Desktop scale") { toggleScale() }
+        kbButton = iconButton(R.drawable.ic_keyboard, "Keyboard") { toggleKeyboard() }
+        lockButton = iconButton(R.drawable.ic_lock_open, "Lock touchpad") { service?.setLocked(true) }
+        for (b in listOf(scaleButton, kbButton, lockButton)) {
+            bar.addView(b, LinearLayout.LayoutParams(dp(48), dp(48)))
+        }
         return bar
     }
 
     private fun buildLockOverlay(): FrameLayout {
         val overlay = FrameLayout(this).apply {
-            setBackgroundColor(0xD1080C12.toInt()); visibility = View.GONE; isClickable = true
+            setBackgroundColor(Ui.SCRIM); visibility = View.GONE; isClickable = true
         }
-        val col = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL; gravity = Gravity.CENTER }
+        val col = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL; gravity = Gravity.CENTER_HORIZONTAL }
+        col.addView(ImageView(this).apply {
+            setImageResource(R.drawable.ic_lock); imageTintList = tint(Ui.WARN)
+        }, LinearLayout.LayoutParams(dp(44), dp(44)))
         col.addView(TextView(this).apply {
-            text = "🔒 Touchpad locked"; setTextColor(TEXT); textSize = 16f; gravity = Gravity.CENTER
+            text = "Touchpad locked"; setTextColor(Ui.TEXT); textSize = 20f; typeface = MEDIUM
+            gravity = Gravity.CENTER; setPadding(0, dp(14), 0, 0)
         })
         col.addView(TextView(this).apply {
-            text = "no input reaches the desktop"
-            setTextColor(MUTED); textSize = 12f; typeface = Typeface.MONOSPACE; gravity = Gravity.CENTER
-            setPadding(0, dp(6), 0, dp(18))
+            text = "Nothing reaches the desktop until you unlock"
+            setTextColor(Ui.MUTED); textSize = 13f; gravity = Gravity.CENTER
+            setPadding(0, dp(6), 0, dp(28))
         })
+        val (bg, level) = Ui.holdFill(Ui.KEY, Ui.ACCENT_SOFT, dp(28).toFloat())
+        holdLevel = level
         col.addView(Button(this).apply {
-            text = "Hold to unlock"; setTextColor(TEXT); setBackgroundColor(APP_SURFACE)
-            setOnTouchListener { _, e -> onUnlockTouch(e); true }
-        })
+            text = "Hold to unlock"; setTextColor(Ui.TEXT); textSize = 15f; isAllCaps = false
+            stateListAnimator = null
+            background = bg
+            setPadding(dp(36), 0, dp(36), 0)
+            setOnTouchListener { v, e -> onUnlockTouch(v, e); true }
+        }, LinearLayout.LayoutParams(WRAP, dp(56)))
         overlay.addView(col, FrameLayout.LayoutParams(WRAP, WRAP, Gravity.CENTER))
         return overlay
     }
 
-    private fun onUnlockTouch(e: MotionEvent) {
+    /** Hold for [UNLOCK_HOLD_MS] to unlock; the pill fills as you hold. */
+    private fun onUnlockTouch(v: View, e: MotionEvent) {
         when (e.actionMasked) {
             MotionEvent.ACTION_DOWN -> {
-                unlockHold = Runnable { service?.setLocked(false) }
+                hapticTap(v)
+                holdAnim = ValueAnimator.ofInt(0, 10_000).apply {
+                    duration = UNLOCK_HOLD_MS
+                    addUpdateListener { holdLevel.level = it.animatedValue as Int }
+                    start()
+                }
+                unlockHold = Runnable {
+                    v.performHapticFeedback(HapticFeedbackConstants.CONFIRM)
+                    service?.setLocked(false)
+                }
                 handler.postDelayed(unlockHold!!, UNLOCK_HOLD_MS)
             }
-            MotionEvent.ACTION_UP, MotionEvent.ACTION_CANCEL ->
+            MotionEvent.ACTION_UP, MotionEvent.ACTION_CANCEL -> {
                 unlockHold?.let { handler.removeCallbacks(it) }
+                resetHold()
+            }
         }
     }
 
-    private fun iconButton(label: String, onClick: () -> Unit) = Button(this).apply {
-        text = label; setTextColor(MUTED); textSize = 16f
-        setBackgroundColor(Color.TRANSPARENT); minWidth = dp(44)
-        setOnClickListener { onClick() }
+    private fun resetHold() {
+        holdAnim?.cancel(); holdAnim = null
+        if (::holdLevel.isInitialized) holdLevel.level = 0
+    }
+
+    private fun iconButton(icon: Int, description: String, onClick: () -> Unit) = ImageButton(this).apply {
+        setImageResource(icon)
+        imageTintList = tint(Ui.MUTED)
+        background = Ui.borderless()
+        scaleType = ImageView.ScaleType.CENTER
+        contentDescription = description
+        setOnClickListener { v -> hapticTap(v); onClick() }
     }
 
     private fun dp(v: Int) = (v * resources.displayMetrics.density).toInt()
@@ -603,16 +700,10 @@ class MainActivity : Activity() {
         const val LETTERS = 0
         const val SYMBOLS = 1
         const val MORE_SYMBOLS = 2
+        const val KEY_HEIGHT = 48
+        const val CHIP_HEIGHT = 36
         const val MATCH = FrameLayout.LayoutParams.MATCH_PARENT
         const val WRAP = FrameLayout.LayoutParams.WRAP_CONTENT
-
-        val APP_BG = 0xFF0D1117.toInt()
-        val PAD_BG = 0xFF0B0F15.toInt()
-        val APP_SURFACE = 0xFF151C26.toInt()
-        val TEXT = 0xFFD7DEE7.toInt()
-        val MUTED = 0xFF7D8894.toInt()
-        val WARN = 0xFFD29922.toInt()
-        val GOOD = 0xFF3FB950.toInt()
-        val SHIFT_ON = 0xFF2D3B4E.toInt()
+        val MEDIUM: Typeface = Typeface.create("sans-serif-medium", Typeface.NORMAL)
     }
 }

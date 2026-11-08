@@ -8,6 +8,7 @@
   No accessibility event types are requested (onAccessibilityEvent is unused).
 -->
 <accessibility-service xmlns:android="http://schemas.android.com/apk/res/android"
+    android:description="@string/a11y_description"
     android:accessibilityFeedbackType="feedbackGeneric"
     android:accessibilityFlags="flagDefault|flagRetrieveInteractiveWindows|flagReportViewIds"
     android:canPerformGestures="true"
