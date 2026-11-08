@@ -509,6 +509,9 @@ class MainActivity : Activity() {
 
     private fun row(block: LinearLayout.() -> Unit) = LinearLayout(this).apply {
         orientation = LinearLayout.HORIZONTAL
+        // Keys with different text sizes would otherwise shift to share a text baseline, pushing
+        // the small-label keys (?123, space) down and clipping their bottoms.
+        isBaselineAligned = false
         layoutParams = LinearLayout.LayoutParams(MATCH, WRAP).apply { topMargin = dp(6) }
         block()
     }
