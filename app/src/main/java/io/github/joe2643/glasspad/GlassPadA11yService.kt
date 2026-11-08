@@ -134,7 +134,7 @@ class GlassPadA11yService : AccessibilityService() {
             // since it is never truly input-focused while this app is foreground.
             if (action == GestureAction.LeftClick) {
                 lastClick = cursor.positionFor(displayId)
-                bg.post { syncBuffer() }
+                bg.post { syncAfterClick() }
             }
             pipeline.dispatch(displayId, action)
         }
@@ -257,6 +257,25 @@ class GlassPadA11yService : AccessibilityService() {
     }
 
     /**
+     * After a click: find the field it hit. If the phone had focus (the phone keyboard was open),
+     * the desktop's windows only become visible once the click has moved focus there, so look again
+     * shortly. Worker thread.
+     */
+    private fun syncAfterClick(attempt: Int = 0) {
+        syncBuffer()
+        Log.d(KEYS_TAG, "click: field ${describe(cachedField)}, desktop windows visible=${desktopVisible()} (try $attempt)")
+        if (cachedField == null && attempt < CLICK_SYNC_RETRIES) {
+            bg.postDelayed({ syncAfterClick(attempt + 1) }, CLICK_SYNC_WAIT_MS)
+        }
+    }
+
+    /** Class and view id only — never the text. */
+    private fun describe(n: AccessibilityNodeInfo?) =
+        n?.let { "${it.className?.toString()?.substringAfterLast('.')}#${it.viewIdResourceName?.substringAfterLast('/') ?: "-"}" } ?: "none"
+
+    private fun desktopVisible() = targetDisplayId != INVALID && windows().get(targetDisplayId).orEmpty().isNotEmpty()
+
+    /**
      * The clicked field: found afresh, or the one found at the last click. Accessibility reports only
      * the top-focused display's windows, so while you type on the phone's own keyboard (the phone
      * has focus) the fresh search can come back empty. Worker thread.
@@ -276,9 +295,13 @@ class GlassPadA11yService : AccessibilityService() {
     }
 
     private fun insertAttempt(text: String, submit: Boolean, attempt: Int, onDone: (String?) -> Unit) {
-        val n = field()
-        if (n != null && writeAtCaret(n, text)) {
-            Log.d(KEYS_TAG, "inserted ${text.length} chars (attempt $attempt)")
+        val fresh = targetField()
+        val cached = cachedField
+        val n = fresh?.also { cachedField = it } ?: cached?.takeIf { it.refresh() }
+        val written = n != null && writeAtCaret(n, text)
+        Log.d(KEYS_TAG, "insert try $attempt: fresh=${describe(fresh)} cached=${describe(cached)} " +
+            "using=${describe(n)} written=$written desktop windows visible=${desktopVisible()}")
+        if (n != null && written) {
             if (submit) enterNow(n)
             main.post { onDone(null) }
             return
@@ -465,16 +488,16 @@ class GlassPadA11yService : AccessibilityService() {
      * focus, because the desktop field is never truly input-focused while this app is foreground.
      */
     private fun targetField(): AccessibilityNodeInfo? {
-        val p = lastClick ?: return null
         val displayId = targetDisplayId
         if (displayId == INVALID) return null
-        val all = windows()
-        for (i in 0 until all.size()) {
-            if (all.keyAt(i) != displayId) continue
-            for (w in all.valueAt(i)) {
-                val hit = w.root?.let { editableAtPoint(it, p.x.toInt(), p.y.toInt()) }
-                if (hit != null) return hit
-            }
+        val roots = windows().get(displayId).orEmpty().mapNotNull { it.root }
+        lastClick?.let { p ->
+            for (root in roots) editableAtPoint(root, p.x.toInt(), p.y.toInt())?.let { return it }
+        }
+        // Nothing editable under the click: it may have opened a field elsewhere (a search bar that
+        // expands into a separate box). Then the desktop app's input-focused editable is the one.
+        for (root in roots) {
+            root.findFocus(AccessibilityNodeInfo.FOCUS_INPUT)?.takeIf { it.isEditable }?.let { return it }
         }
         return null
     }
@@ -541,8 +564,10 @@ class GlassPadA11yService : AccessibilityService() {
         private const val SHELL_TAG = "GlassPadShell"
         private const val A11Y_TAG = "GlassPadA11y"
         private const val KEYS_TAG = "GlassPadKeys"
-        private const val INSERT_ATTEMPTS = 4
-        private const val REFOCUS_WAIT_MS = 300L
+        private const val INSERT_ATTEMPTS = 8
+        private const val REFOCUS_WAIT_MS = 250L
+        private const val CLICK_SYNC_RETRIES = 3
+        private const val CLICK_SYNC_WAIT_MS = 250L
         private const val SLOW_WINDOWS_MS = 200L
         private const val IME_ENTER_RETRY_MS = 180L
         private val SUBMIT_HINTS = listOf("send", "search", "go", "submit", "post", "reply", "return")
