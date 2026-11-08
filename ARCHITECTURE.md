@@ -49,8 +49,9 @@ io.github.joe2643.glasspad
     ├── AccessibilityInputSink actually dispatches gestures (tap/drag/scroll) to the display
     ├── CursorOverlay.kt       the overlay window on the external display
     ├── CursorView.kt          draws the cursor
-    ├── TouchpadView.kt        captures phone touches → PadFrames
-    ├── MainActivity.kt        UI: trackpad, keyboard, lock, desktop scale, back/home/recents row
+    ├── TouchpadView.kt        captures phone touches → PadFrames; draws finger marks + the guide
+    ├── MainActivity.kt        UI: header, trackpad card, keyboard / desktop-scale sheet, nav row, lock
+    ├── Ui.kt                  the palette and drawable helpers (the UI is built in code)
     ├── DisplayDensity.kt      optional: sets the external display's density (adb-granted)
     ├── DesktopShell.kt        optional: fullscreen via ActivityManager dump → WMShell (adb-granted)
     └── GlassPadIme.kt          a bundled IME (not on the main path; see "Keyboard")
@@ -211,11 +212,11 @@ display, the row falls back to the global actions.
 ### Desktop scale (optional, adb-granted)
 
 Some displays report a tiny physical size — VITURE glasses claim ~305 dpi, so Android picks 416 dpi
-and a 1920×1200 panel lays out like a 738×462 dp phone, with an oversized taskbar. The 🖥 panel sets
-the display's density like `wm density <dpi> -d <id>`; WindowManager stores it per display, so it
+and a 1920×1200 panel lays out like a 738×462 dp phone, with an oversized taskbar. The desktop-scale
+panel (the monitor icon) sets the display's density like `wm density <dpi> -d <id>`; WindowManager stores it per display, so it
 survives reconnects.
 
-This is the one feature beyond the accessibility service: it needs `WRITE_SECURE_SETTINGS`, granted
+Like fullscreen (below), it goes beyond the accessibility service: it needs `WRITE_SECURE_SETTINGS`, granted
 once with `adb shell pm grant io.github.joe2643.glasspad android.permission.WRITE_SECURE_SETTINGS`. Without
 the grant the panel shows that command and everything else works as before. `DisplayDensity` calls
 `IWindowManager.setForcedDisplayDensityForUser` with the app's own user id, after exempting
@@ -258,5 +259,8 @@ key events); it is inert unless explicitly selected as the system keyboard.
   taskbar's nav buttons), observing **no** accessibility events.
 - **`WRITE_SECURE_SETTINGS`** — optional, adb-granted once, used only by the desktop-scale panel.
 - **`DUMP`, `PACKAGE_USAGE_STATS`** — optional, adb-granted once, used only by the ⛶ button.
+  These are broad: `DUMP` lets the app read any system service's dump. GlassPad only asks the
+  activity service for its task list and SystemUI for the two desktop-mode commands, and has no
+  internet permission to send anything anywhere — but grant them only if you want the button.
 - **No** internet, foreground service, notifications, `SYSTEM_ALERT_WINDOW`, root, or Shizuku.
 - The service and IME exports are gated by their system-only `BIND_*` signature permissions.

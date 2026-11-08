@@ -1,178 +1,171 @@
 # GlassPad
 
-**Use your phone as a trackpad and keyboard for an external monitor.**
+**Your phone as the trackpad and keyboard for Android Desktop mode — on AR glasses or a monitor.**
 
-> GlassPad is a fork of [DeskPad](https://github.com/auxiliaryutils/deskpad-app) by auxiliaryutils (MIT).
+Plug your phone into AR glasses (VITURE, XREAL…) or a monitor, pick **Desktop mode**, and you get a
+real desktop with no way to point at it unless you carry a mouse. GlassPad turns the phone's screen
+into a laptop-style **trackpad** (with a cursor on the big screen), an on-screen **keyboard** that
+types into the field you clicked, and the **back / home / recents** buttons — all from your hand.
 
-When you connect your Pixel to a monitor over USB-C and switch it to **Desktop mode**, you get a
-real desktop — but no built-in way to point and click without carrying a mouse and keyboard. GlassPad
-turns the phone's own screen into a **trackpad** (with a cursor drawn on the monitor) and an
-**on-screen keyboard** that types into whatever field you click on the desktop.
+No root, no Shizuku, no PC needed for the core app. A couple of optional extras need a one-time adb
+command.
 
-No mouse, no dongle, no PC, no developer setup. You enable it once and it just works.
+> GlassPad is a fork of [**DeskPad**](https://github.com/auxiliaryutils/deskpad-app) by
+> auxiliaryutils, released under the MIT License. The accessibility-based design, cursor overlay and
+> keyboard relay are theirs; GlassPad reworks the gestures and adds the features below.
 
-> **Status:** tested and working on a Pixel 9 Pro Fold — trackpad, cursor, drag, two-finger scroll,
-> keyboard typing, Enter-to-send, and lock/unlock are all confirmed on real hardware.
+## What GlassPad adds to DeskPad
 
-<p align="center">
-  <img src="docs/screenshot.png" width="760"
-       alt="GlassPad on a phone — left: connected and ready with the on-screen keyboard; right: locked so no input reaches the desktop">
-</p>
+- **Moving never clicks.** A tap is a tap; sliding to aim and lifting doesn't click — like Chrome
+  Remote Desktop or a laptop touchpad. Pointer acceleration makes small moves precise and fast swipes
+  cross the screen.
+- **Pinch to zoom**, centred on the cursor, and **three-finger gestures** for back, home and recents.
+- **The desktop app keeps focus** while you use the trackpad, so window menus (fullscreen, split,
+  windowed) stay open and the app stays active.
+- **Back / Home / Recents buttons** that press the *desktop's* taskbar, not the phone's.
+- **Fullscreen button** — hides the taskbar for the app you're using. *(optional, adb once)*
+- **Desktop scale slider** — shrinks the oversized UI that AR glasses get. *(optional, adb once)*
+- A redesigned phone UI.
 
-<p align="center"><sub>Left: connected (“Ready · display 3”) with the Gboard-style keyboard. Right: locked — no input reaches the desktop until you hold to unlock.</sub></p>
+## Requirements
 
----
+- An Android phone with **Desktop mode** on an external display — e.g. a recent Pixel. Android 11
+  (API 30) or newer.
+- A USB-C display connection: AR glasses, a USB-C monitor, or a USB-C hub with HDMI.
 
-## What you need
-
-- An Android phone that supports **Desktop mode** on an external display (e.g. Pixel 9 Pro Fold on
-  current Android; requires Android 11 / API 30 or newer).
-- A USB-C **DisplayPort** cable and a monitor (or a USB-C hub with HDMI).
-- The GlassPad app (`GlassPad-release.apk`).
-
-That's it. **You do not need adb, a rooted phone, Shizuku, or a computer.** (The exceptions are the
-optional desktop-scale slider and fullscreen button — see below.)
-
----
+Tested on a Pixel 9 Pro XL (Android 17) with VITURE glasses. The three-finger gestures are new and
+have only been tested in unit tests so far.
 
 ## Install
 
-1. Copy `GlassPad-release.apk` to your phone and tap it to install.
-   (You may need to allow "Install unknown apps" for your file manager the first time.)
-2. Open **GlassPad**.
+There's no Play Store build. Build the APK yourself (see [For developers](#for-developers)) and
+install it — `adb install app-debug.apk`, or copy it to the phone and tap it.
 
----
+GlassPad uses its own app id (`io.github.joe2643.glasspad`), so it installs alongside DeskPad
+without replacing it.
 
-## One-time setup (about 20 seconds)
+## One-time setup
 
-GlassPad needs one permission: an **Accessibility** service. This is what lets it move a cursor and
-tap on the external display.
+GlassPad needs one permission: an **Accessibility** service, which is what lets it move a cursor,
+click and type on the external display.
 
-1. Open GlassPad and **tap the status bar at the top** (it says "Tap here to enable GlassPad in
-   Accessibility").
-2. In the Accessibility list, choose **GlassPad** and turn it **On**. Confirm the prompt.
-3. Return to GlassPad. The dot at the top turns green when it's ready.
+1. Open GlassPad and tap **GlassPad** at the top ("Tap to turn on GlassPad in Accessibility").
+2. In the Accessibility list choose **GlassPad**, turn it **on**, and confirm.
+3. Come back. The dot turns green once a display is connected.
 
-You only do this once. The permission **survives reboots** — you never have to set it up again.
+It survives reboots — you only do this once.
 
-There is **no keyboard to enable** — GlassPad types through the same accessibility permission, so once
-the service is on, both the trackpad and keyboard work.
+> **"App was denied access" / "Restricted setting"?** Android 13+ blocks accessibility for apps
+> installed from a file manager or browser. Open **Settings → Apps → GlassPad**, tap **⋮** (top
+> right) → **Allow restricted settings**, then turn the service on again. Installing with
+> `adb install` avoids this.
 
----
+### Optional extras (one adb command each)
 
-## Everyday use
+Two features need permissions only adb can grant. Run these once with the phone connected to a
+computer (USB or Wireless debugging); everything else works without them.
 
-1. Connect your phone to the monitor over USB-C and choose **Desktop** when prompted.
-2. Open GlassPad. The top bar should read **"Ready · display …"**.
-3. The whole phone screen is now your trackpad. A cursor appears on the monitor.
-
-### Trackpad gestures
-
-| Gesture on the phone | What happens on the desktop |
-|----------------------|-----------------------------|
-| Slide one finger | Move the cursor |
-| Tap | Left click |
-| Two-finger tap | Right click |
-| Two-finger slide | Scroll |
-| Two fingers apart / together | **Pinch to zoom**, centred on the cursor (one finger may stay still) |
-| Tap, then press again and slide | **Grab and drag** (move a window, select text, drag a file) |
-| Three-finger swipe left or right | Back |
-| Three-finger swipe up | Home |
-| Three-finger swipe up and hold | Recent apps |
-| Three-finger tap | Recent apps |
-
-The three-finger gestures are Android's own touchpad navigation gestures (a three-finger swipe down
-is left alone — Android keeps it for notifications).
-
-The drag follows your finger live — press, then keep sliding, and lift to drop.
-
-### Keyboard
-
-1. Tap the **⌨ keyboard icon** in the top bar to show the keyboard.
-2. **Click the text field you want on the desktop first** (with the trackpad) — that's where your
-   typing goes.
-3. Type. The layout is the familiar Gboard-style keyboard:
-   - Letters, with **Shift** and a **?123** symbols page (and a further **=\<** page).
-   - **Backspace**, **Space**, and **Enter**.
-   - A **Copy / Paste / Cut / All** row for quick editing.
-   - Each key gives a little pop-up preview and a haptic tap as you press it.
-
-**Enter actually sends.** In a chat box it presses Send; in a browser address bar or a search box it
-submits (Go / Search) — just like a real keyboard's Enter.
-
-### Back, Home, Recents
-
-The **◁ ○ □** row at the bottom of the phone works the desktop: it presses the desktop taskbar's own
-Back, Home and Recents buttons, so you don't have to aim the cursor at them.
-
-### Fullscreen (optional, needs a PC once)
-
-**⛶** (next to ◁ ○ □) switches the app you're using on the desktop to true fullscreen — the taskbar
-hides, and apps that go immersive (video, readers) hide the status bar too. Tap it again to put the
-app back in a desktop window. Needs a one-time grant:
+**Fullscreen button:**
 
 ```bash
 adb shell pm grant io.github.joe2643.glasspad android.permission.DUMP
 adb shell pm grant io.github.joe2643.glasspad android.permission.PACKAGE_USAGE_STATS
 ```
 
-### Desktop scale (optional, needs a PC once)
-
-If the desktop's UI looks oversized — the taskbar and title bars eat the screen (common with AR
-glasses such as VITURE, which report a tiny physical size) — tap **🖥** in the top bar. Drag the
-slider (or tap **smaller** / **bigger**) to fit more on the desktop; **reset** returns to the
-display's default. The setting is remembered per display.
-
-This one feature needs a permission only a computer can grant. Once, with the phone on adb:
+**Desktop scale slider:**
 
 ```bash
 adb shell pm grant io.github.joe2643.glasspad android.permission.WRITE_SECURE_SETTINGS
 ```
 
-Until then the panel just shows that command; everything else works without it.
+See [Privacy & permissions](#privacy--permissions) for what these allow.
 
-### Lock (so nothing happens by accident)
+## Using it
 
-Tap the **🔓 padlock** in the top bar to **lock**. It changes to **🔒**, and a "Touchpad locked"
-overlay appears — no taps, drags, scrolls, or keystrokes reach the desktop. This is handy when you
-set the phone down. To unlock, press and **hold** the "Hold to unlock" button.
+1. Connect the phone to your glasses or monitor and choose **Desktop**.
+2. Open GlassPad. The header reads **Ready · 1920×1080** (your display's size).
+3. **Click once on the desktop** (tap the trackpad). From then on the desktop app keeps focus, and
+   the keyboard and the back / home / recents buttons work.
 
----
+### Trackpad gestures
+
+| On the phone | On the desktop |
+|---|---|
+| Slide one finger | Move the cursor |
+| Tap | Left click |
+| Two-finger tap | Right click |
+| Two-finger slide | Scroll |
+| Two fingers apart / together | Pinch to zoom, centred on the cursor (one finger may stay still) |
+| Tap, then press again and slide | Drag (move a window, select text) — lift to drop |
+| Three-finger swipe left or right | Back |
+| Three-finger swipe up | Home |
+| Three-finger swipe up and hold | Recent apps |
+| Three-finger tap | Recent apps |
+
+A three-finger swipe down is left alone, since Android uses it for notifications. The trackpad shows
+a short guide until you first touch it.
+
+### Header buttons
+
+| Icon | What it does |
+|---|---|
+| Monitor | Desktop scale: drag the slider (or **Smaller** / **Bigger**) to fit more on the desktop; **Reset** returns to the display's default. Remembered per display. On VITURE glasses 240 dpi works well. |
+| Keyboard | Shows the keyboard. |
+| Padlock | Locks the trackpad: nothing reaches the desktop until you **hold** "Hold to unlock". Handy when you put the phone down. |
+
+### Keyboard
+
+**Click the text field on the desktop first**, then type — that's where the text goes. The layout is
+Gboard-like: letters with Shift, a **?123** symbols page (and **=\<** beyond it), Backspace, Space
+and **Enter**, plus **Copy / Paste / Cut / Select all** chips. Keys pop up a preview and give a
+haptic tap.
+
+**Enter really submits:** in a chat box it presses Send; in an address bar or search box it goes.
+
+### Bottom row
+
+| Icon | What it does |
+|---|---|
+| ◁ ○ □ | Back, Home, Recents — presses the desktop taskbar's own buttons. |
+| ⛶ | Switches the desktop app to fullscreen (the taskbar hides; video and reader apps hide the status bar too). Tap again to put it back in a window. Needs the optional grant. |
 
 ## Troubleshooting
 
-- **Top bar says "connect a display (Desktop mode)"** — make sure the monitor is plugged in and you
-  chose **Desktop** (not screen mirroring). When it's working the bar shows "Ready · display …".
-- **Typing doesn't appear** — click the desktop text field with the trackpad *first*, then type.
-  GlassPad types into the field you last clicked.
-- **The status dot is orange / "Tap here to enable"** — the accessibility service was turned off
-  (some battery optimizers do this). Tap the status bar and turn GlassPad back on.
-- **Cursor feels too fast or too slow / scroll too coarse** — these are tunable; see the developer
-  notes below.
+- **"Connect a display in Desktop mode"** — plug in the display and choose **Desktop**, not screen
+  mirroring.
+- **Back / home / recents or typing do nothing** — click once on the desktop first. Android only
+  lets GlassPad see the desktop's windows while the desktop has focus.
+- **Typing doesn't appear** — click the desktop text field with the trackpad first.
+- **"Tap to turn on GlassPad in Accessibility"** — the service was turned off (some battery savers
+  do this). Tap it and turn GlassPad back on.
+- **Fullscreen or desktop scale shows an adb command** — run the grant from
+  [Optional extras](#optional-extras-one-adb-command-each).
+- **Something specific misbehaves** — `adb logcat -s GlassPadGesture GlassPadNav GlassPadShell GlassPadA11y`
+  shows what GlassPad decided and why.
 
----
+## Privacy & permissions
 
-## Is it safe? (privacy & permissions)
-
-GlassPad is deliberately minimal:
-
-- **No internet permission** — it can't send anything anywhere. Everything stays on your phone.
-- **No "Display over other apps," no background service, no notifications, no root.**
-- The one permission it uses (Accessibility) is scoped to exactly what it needs: dispatching taps to
-  the external display and reading/writing the text field you're typing into. It watches **no**
-  other accessibility events.
-- The cursor is drawn using an accessibility overlay, so it needs no extra "draw over apps"
-  permission.
-
----
+- **No internet permission.** GlassPad cannot send anything anywhere.
+- **Accessibility service** (required): dispatches taps and swipes to the external display, draws
+  the cursor, reads and writes the text field you clicked, and finds the taskbar's back / home /
+  recents buttons. It listens to no accessibility events.
+- **`WRITE_SECURE_SETTINGS`** (optional): lets the slider change the external display's density.
+- **`DUMP` + `PACKAGE_USAGE_STATS`** (optional): let the fullscreen button ask Android which app is
+  in front and tell the desktop to make it fullscreen. **These are broad** — `DUMP` lets an app read
+  any system service's diagnostic dump. GlassPad only reads the task list and runs the two
+  desktop-mode commands, and can't send data off the phone, but grant them only if you want the
+  button.
+- The optional features call hidden Android APIs through
+  [`hiddenapibypass`](https://github.com/LSPosed/AndroidHiddenApiBypass). They rely on Android
+  internals, so an Android update can break them; GlassPad then shows the error instead of crashing.
+- No root, no Shizuku, no background service, no notifications, no "display over other apps".
 
 ## For developers
 
-Project layout: a framework-free `core/` package (pure Kotlin gesture/pipeline/cursor logic, covered
-by **86 JUnit unit tests**) with a thin Android layer on top — an `AccessibilityService` that
-dispatches gestures and draws the cursor, and an Activity hosting the trackpad + on-screen keyboard.
-One third-party runtime dependency: [`hiddenapibypass`](https://github.com/LSPosed/AndroidHiddenApiBypass),
-used only by the optional desktop-scale slider and fullscreen button.
+A framework-free `core/` package (gestures, pointer acceleration, pipeline, cursor and dump parsing —
+**86 JUnit tests**, no emulator needed) with a thin Android layer on top. See
+[ARCHITECTURE.md](ARCHITECTURE.md) for the design: the gesture recognizer, focus handling, how the
+desktop's taskbar and fullscreen are driven, and the threading model.
 
 ```bash
 export ANDROID_HOME=/path/to/android-sdk
@@ -182,22 +175,26 @@ export ANDROID_HOME=/path/to/android-sdk
 ./gradlew :app:assembleRelease      # signed release (needs keystore.properties, see below)
 ```
 
-**Signing:** release signing is loaded from a `keystore.properties` file at the repo root, which is
-**gitignored** and not part of this repository. Copy `keystore.properties.example` to
-`keystore.properties` and fill in your keystore path and passwords to produce signed release builds.
-Without it, debug builds and an unsigned release still build fine.
+**Signing:** release signing reads a gitignored `keystore.properties` at the repo root. Copy
+`keystore.properties.example` and fill in your keystore; without it, debug builds and an unsigned
+release still build.
 
-**Tuning:** cursor sensitivity, scroll step, and drag/tap timings are constants in
-`CursorController` and `AccessibilityInputSink` — adjust to taste.
+**Tuning:** gesture thresholds are physical millimetres in `GestureConfig` (`core/Gestures.kt`);
+pointer acceleration lives in `core/PointerAccel.kt`; pinch sizing and dispatch timing in
+`AccessibilityInputSink`.
 
-**Design:** see [ARCHITECTURE.md](ARCHITECTURE.md) for how it all fits together — the pure `core/`
-pipeline, the accessibility techniques (coordinate-based typing, send-on-Enter, live drag), and the
-threading model.
+## Credits
 
----
+- [DeskPad](https://github.com/auxiliaryutils/deskpad-app) by auxiliaryutils — the app GlassPad is
+  built on.
+- Gesture rules informed by [libinput](https://wayland.freedesktop.org/libinput/doc/latest/)'s tap
+  handling and touchpad acceleration, ChromeOS's gesture library, and Chrome Remote Desktop's pinch
+  detection.
+- [AndroidHiddenApiBypass](https://github.com/LSPosed/AndroidHiddenApiBypass) by LSPosed.
 
 ## License
 
-Released under the [MIT License](LICENSE) — free to use, modify, and distribute.
+[MIT](LICENSE), as the original. The LICENSE keeps the DeskPad contributors' copyright alongside
+GlassPad's.
 
-*GlassPad is a self-authored app (version 0.2). minSdk 30 · compileSdk 35 · Kotlin.*
+*GlassPad 0.3 · minSdk 30 · targetSdk 35 · Kotlin.*
