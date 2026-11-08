@@ -8,6 +8,16 @@
         android:name="android.permission.WRITE_SECURE_SETTINGS"
         tools:ignore="ProtectedPermissions" />
 
+    <!-- Optional: let the ⛶ button move the desktop app to fullscreen via SystemUI's WMShell
+         commands (ActivityManager dump). Only adb can grant them (once): adb shell pm grant
+         com.example.deskpad android.permission.DUMP  (and android.permission.PACKAGE_USAGE_STATS) -->
+    <uses-permission
+        android:name="android.permission.DUMP"
+        tools:ignore="ProtectedPermissions" />
+    <uses-permission
+        android:name="android.permission.PACKAGE_USAGE_STATS"
+        tools:ignore="ProtectedPermissions" />
+
     <application
         android:allowBackup="false"
         android:icon="@mipmap/ic_launcher"

@@ -25,6 +25,7 @@ import com.example.deskpad.core.GestureRecognizer
 import com.example.deskpad.core.InputPipeline
 import com.example.deskpad.core.LockController
 import com.example.deskpad.core.PadFrame
+import com.example.deskpad.core.WmShell
 
 /**
  * The hub for the no-adb build. As an enabled AccessibilityService it runs whenever the user has
@@ -34,8 +35,8 @@ import com.example.deskpad.core.PadFrame
  *
  * Input runs on the **main thread** — pad frames arrive there (touch events) and display callbacks
  * are delivered there — so [CursorController] is only ever touched from one thread and
- * `dispatchGesture` is called where the platform expects it. Window queries (keyboard and
- * nav) run on one worker thread, because the system can take seconds to answer them.
+ * `dispatchGesture` is called where the platform expects it. Window queries (keyboard, nav,
+ * fullscreen) run on one worker thread, because the system can take seconds to answer them.
  */
 class DeskPadA11yService : AccessibilityService() {
 
@@ -173,6 +174,38 @@ class DeskPadA11yService : AccessibilityService() {
             } else {
                 node.performAction(AccessibilityNodeInfo.ACTION_CLICK)
             }
+        }
+    }
+
+    /**
+     * Toggles the desktop's focused app between a desktop window and fullscreen — fullscreen
+     * stashes the taskbar (and an immersive app hides the status bar too). Runs on the worker;
+     * [onDone] gets "fullscreen" / "window" or the error, on the main thread.
+     */
+    fun toggleFullscreen(onDone: (Result<String>) -> Unit) {
+        if (lock.isLocked) return
+        bg.post {
+            val result = runCatching { toggleFullscreenBlocking() }
+            Log.d(SHELL_TAG, "fullscreen → $result")
+            main.post { onDone(result) }
+        }
+    }
+
+    /** Finds the desktop's front app from the activity manager — not accessibility, which only sees
+     *  the top-focused display. */
+    private fun toggleFullscreenBlocking(): String {
+        val displayId = targetDisplayId
+        if (displayId == INVALID) error("no external display")
+        val task = DesktopShell.topAppTask(displayId) ?: error("no app on display $displayId")
+        Log.d(SHELL_TAG, "front task $task")
+        return if (task.mode == "fullscreen") {
+            val desk = WmShell.parseDeskIds(DesktopShell.wmShell(WmShell.deskIds(displayId))).firstOrNull()
+                ?: error("no desk on display $displayId")
+            DesktopShell.wmShell(WmShell.moveToDesk(task.id, desk))
+            "window"
+        } else {
+            DesktopShell.wmShell(WmShell.moveOutOfDesk(task.id))
+            "fullscreen"
         }
     }
 
@@ -443,6 +476,7 @@ class DeskPadA11yService : AccessibilityService() {
         private const val INVALID = -1
         private const val GESTURE_TAG = "DeskPadGesture"
         private const val NAV_TAG = "DeskPadNav"
+        private const val SHELL_TAG = "DeskPadShell"
         private const val A11Y_TAG = "DeskPadA11y"
         private const val SLOW_WINDOWS_MS = 200L
         private const val IME_ENTER_RETRY_MS = 180L

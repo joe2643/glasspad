@@ -10,6 +10,7 @@ import android.os.Bundle
 import android.os.Handler
 import android.os.Looper
 import android.provider.Settings
+import android.util.Log
 import android.view.Gravity
 import android.view.HapticFeedbackConstants
 import android.view.MotionEvent
@@ -267,6 +268,26 @@ class MainActivity : Activity() {
                 setBackgroundColor(Color.TRANSPARENT)
                 setOnClickListener { v -> hapticTap(v); service?.navigate(button) }
             }, LinearLayout.LayoutParams(0, WRAP, 1f))
+        }
+        addView(Button(this@MainActivity).apply {
+            text = "⛶"; textSize = 18f; setTextColor(MUTED); isAllCaps = false
+            setBackgroundColor(Color.TRANSPARENT)
+            setOnClickListener { v -> hapticTap(v); toggleFullscreen() }
+        }, LinearLayout.LayoutParams(0, WRAP, 1f))
+    }
+
+    private fun toggleFullscreen() {
+        val svc = service ?: return
+        Log.d("DeskPadShell", "⛶ pressed")
+        if (!DesktopShell.isGranted(this)) {
+            Toast.makeText(this, "Fullscreen needs a one-time grant from a PC:\n" +
+                DesktopShell.GRANT_COMMANDS.joinToString("\n"), Toast.LENGTH_LONG).show()
+            return
+        }
+        svc.toggleFullscreen { result ->
+            result.exceptionOrNull()?.let {
+                Toast.makeText(this, "Fullscreen failed: ${rootCause(it)}", Toast.LENGTH_LONG).show()
+            }
         }
     }
 
