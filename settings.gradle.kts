@@ -12,5 +12,5 @@ dependencyResolutionManagement {
         mavenCentral()
     }
 }
-rootProject.name = "DeskPad"
+rootProject.name = "GlassPad"
 include(":app")

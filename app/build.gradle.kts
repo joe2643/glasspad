@@ -15,15 +15,15 @@ val keystoreProps = Properties().apply {
 }
 
 android {
-    namespace = "com.example.deskpad"
+    namespace = "io.github.joe2643.glasspad"
     compileSdk = 35
 
     defaultConfig {
-        applicationId = "com.example.deskpad"
+        applicationId = "io.github.joe2643.glasspad"
         minSdk = 30
         targetSdk = 35
-        versionCode = 1
-        versionName = "0.2-a11y"
+        versionCode = 3
+        versionName = "0.3"
     }
 
     buildFeatures {

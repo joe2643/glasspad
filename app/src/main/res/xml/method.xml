@@ -3,5 +3,5 @@
     android:supportsSwitchingToNextInputMethod="true">
     <subtype
         android:imeSubtypeMode="keyboard"
-        android:label="DeskPad" />
+        android:label="GlassPad" />
 </input-method>

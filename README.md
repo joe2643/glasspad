@@ -1,9 +1,11 @@
-# DeskPad
+# GlassPad
 
 **Use your phone as a trackpad and keyboard for an external monitor.**
 
+> GlassPad is a fork of [DeskPad](https://github.com/auxiliaryutils/deskpad-app) by auxiliaryutils (MIT).
+
 When you connect your Pixel to a monitor over USB-C and switch it to **Desktop mode**, you get a
-real desktop — but no built-in way to point and click without carrying a mouse and keyboard. DeskPad
+real desktop — but no built-in way to point and click without carrying a mouse and keyboard. GlassPad
 turns the phone's own screen into a **trackpad** (with a cursor drawn on the monitor) and an
 **on-screen keyboard** that types into whatever field you click on the desktop.
 
@@ -14,7 +16,7 @@ No mouse, no dongle, no PC, no developer setup. You enable it once and it just w
 
 <p align="center">
   <img src="docs/screenshot.png" width="760"
-       alt="DeskPad on a phone — left: connected and ready with the on-screen keyboard; right: locked so no input reaches the desktop">
+       alt="GlassPad on a phone — left: connected and ready with the on-screen keyboard; right: locked so no input reaches the desktop">
 </p>
 
 <p align="center"><sub>Left: connected (“Ready · display 3”) with the Gboard-style keyboard. Right: locked — no input reaches the desktop until you hold to unlock.</sub></p>
@@ -26,7 +28,7 @@ No mouse, no dongle, no PC, no developer setup. You enable it once and it just w
 - An Android phone that supports **Desktop mode** on an external display (e.g. Pixel 9 Pro Fold on
   current Android; requires Android 11 / API 30 or newer).
 - A USB-C **DisplayPort** cable and a monitor (or a USB-C hub with HDMI).
-- The DeskPad app (`DeskPad-release.apk`).
+- The GlassPad app (`GlassPad-release.apk`).
 
 That's it. **You do not need adb, a rooted phone, Shizuku, or a computer.** (The exceptions are the
 optional desktop-scale slider and fullscreen button — see below.)
@@ -35,25 +37,25 @@ optional desktop-scale slider and fullscreen button — see below.)
 
 ## Install
 
-1. Copy `DeskPad-release.apk` to your phone and tap it to install.
+1. Copy `GlassPad-release.apk` to your phone and tap it to install.
    (You may need to allow "Install unknown apps" for your file manager the first time.)
-2. Open **DeskPad**.
+2. Open **GlassPad**.
 
 ---
 
 ## One-time setup (about 20 seconds)
 
-DeskPad needs one permission: an **Accessibility** service. This is what lets it move a cursor and
+GlassPad needs one permission: an **Accessibility** service. This is what lets it move a cursor and
 tap on the external display.
 
-1. Open DeskPad and **tap the status bar at the top** (it says "Tap here to enable DeskPad in
+1. Open GlassPad and **tap the status bar at the top** (it says "Tap here to enable GlassPad in
    Accessibility").
-2. In the Accessibility list, choose **DeskPad** and turn it **On**. Confirm the prompt.
-3. Return to DeskPad. The dot at the top turns green when it's ready.
+2. In the Accessibility list, choose **GlassPad** and turn it **On**. Confirm the prompt.
+3. Return to GlassPad. The dot at the top turns green when it's ready.
 
 You only do this once. The permission **survives reboots** — you never have to set it up again.
 
-There is **no keyboard to enable** — DeskPad types through the same accessibility permission, so once
+There is **no keyboard to enable** — GlassPad types through the same accessibility permission, so once
 the service is on, both the trackpad and keyboard work.
 
 ---
@@ -61,7 +63,7 @@ the service is on, both the trackpad and keyboard work.
 ## Everyday use
 
 1. Connect your phone to the monitor over USB-C and choose **Desktop** when prompted.
-2. Open DeskPad. The top bar should read **"Ready · display …"**.
+2. Open GlassPad. The top bar should read **"Ready · display …"**.
 3. The whole phone screen is now your trackpad. A cursor appears on the monitor.
 
 ### Trackpad gestures
@@ -110,8 +112,8 @@ hides, and apps that go immersive (video, readers) hide the status bar too. Tap 
 app back in a desktop window. Needs a one-time grant:
 
 ```bash
-adb shell pm grant com.example.deskpad android.permission.DUMP
-adb shell pm grant com.example.deskpad android.permission.PACKAGE_USAGE_STATS
+adb shell pm grant io.github.joe2643.glasspad android.permission.DUMP
+adb shell pm grant io.github.joe2643.glasspad android.permission.PACKAGE_USAGE_STATS
 ```
 
 ### Desktop scale (optional, needs a PC once)
@@ -124,7 +126,7 @@ display's default. The setting is remembered per display.
 This one feature needs a permission only a computer can grant. Once, with the phone on adb:
 
 ```bash
-adb shell pm grant com.example.deskpad android.permission.WRITE_SECURE_SETTINGS
+adb shell pm grant io.github.joe2643.glasspad android.permission.WRITE_SECURE_SETTINGS
 ```
 
 Until then the panel just shows that command; everything else works without it.
@@ -142,9 +144,9 @@ set the phone down. To unlock, press and **hold** the "Hold to unlock" button.
 - **Top bar says "connect a display (Desktop mode)"** — make sure the monitor is plugged in and you
   chose **Desktop** (not screen mirroring). When it's working the bar shows "Ready · display …".
 - **Typing doesn't appear** — click the desktop text field with the trackpad *first*, then type.
-  DeskPad types into the field you last clicked.
+  GlassPad types into the field you last clicked.
 - **The status dot is orange / "Tap here to enable"** — the accessibility service was turned off
-  (some battery optimizers do this). Tap the status bar and turn DeskPad back on.
+  (some battery optimizers do this). Tap the status bar and turn GlassPad back on.
 - **Cursor feels too fast or too slow / scroll too coarse** — these are tunable; see the developer
   notes below.
 
@@ -152,7 +154,7 @@ set the phone down. To unlock, press and **hold** the "Hold to unlock" button.
 
 ## Is it safe? (privacy & permissions)
 
-DeskPad is deliberately minimal:
+GlassPad is deliberately minimal:
 
 - **No internet permission** — it can't send anything anywhere. Everything stays on your phone.
 - **No "Display over other apps," no background service, no notifications, no root.**
@@ -198,4 +200,4 @@ threading model.
 
 Released under the [MIT License](LICENSE) — free to use, modify, and distribute.
 
-*DeskPad is a self-authored app (version 0.2). minSdk 30 · compileSdk 35 · Kotlin.*
+*GlassPad is a self-authored app (version 0.2). minSdk 30 · compileSdk 35 · Kotlin.*

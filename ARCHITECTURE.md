@@ -1,11 +1,14 @@
-# DeskPad — Architecture
+# GlassPad — Architecture
 
-This document explains how DeskPad is built, for contributors and the curious. For install/usage,
+This document explains how GlassPad is built, for contributors and the curious. For install/usage,
 see [README.md](README.md).
+
+GlassPad is a fork of [DeskPad](https://github.com/auxiliaryutils/deskpad-app) by auxiliaryutils
+(MIT); the core design below is theirs, extended here.
 
 ## The core idea
 
-DeskPad runs as a normal foreground app on the phone while driving a **different display** — the
+GlassPad runs as a normal foreground app on the phone while driving a **different display** — the
 external monitor's Desktop-mode session. It needs a way to move a cursor, tap, drag, scroll, and
 edit text on that other display without adb, root, or Shizuku.
 
@@ -25,7 +28,7 @@ the earlier Shizuku prototype.
 The code splits along a hard boundary so the interesting logic is testable without a device.
 
 ```
-com.example.deskpad
+io.github.joe2643.glasspad
 ├── core/                     ← pure Kotlin. NO android.* imports. 86 JUnit tests.
 │   ├── Gestures.kt           PadFrame, PadPointer, GestureAction, GestureConfig, GestureRecognizer
 │   ├── PointerAccel.kt       speed-based pointer acceleration (libinput's touchpad curve)
@@ -42,7 +45,7 @@ com.example.deskpad
 │   └── Geometry.kt           Point, Bounds
 │
 └── (Android layer)           ← the only place android.* lives
-    ├── DeskPadA11yService.kt  the hub: owns the pipeline, tracks the display, does the keyboard
+    ├── GlassPadA11yService.kt  the hub: owns the pipeline, tracks the display, does the keyboard
     ├── AccessibilityInputSink actually dispatches gestures (tap/drag/scroll) to the display
     ├── CursorOverlay.kt       the overlay window on the external display
     ├── CursorView.kt          draws the cursor
@@ -50,7 +53,7 @@ com.example.deskpad
     ├── MainActivity.kt        UI: trackpad, keyboard, lock, desktop scale, back/home/recents row
     ├── DisplayDensity.kt      optional: sets the external display's density (adb-granted)
     ├── DesktopShell.kt        optional: fullscreen via ActivityManager dump → WMShell (adb-granted)
-    └── DeskPadIme.kt          a bundled IME (not on the main path; see "Keyboard")
+    └── GlassPadIme.kt          a bundled IME (not on the main path; see "Keyboard")
 ```
 
 Everything in `core/` is framework-free, so `./gradlew testDebugUnitTest` exercises the gesture
@@ -97,7 +100,7 @@ TouchpadView          GestureRecognizer        InputPipeline           Accessibi
    `CursorOverlay` and dispatches touch gestures to the external `displayId`.
 
 The keyboard is a parallel path: `MainActivity`'s on-screen keys call methods on
-`DeskPadA11yService`, which edits the clicked desktop field directly (see below).
+`GlassPadA11yService`, which edits the clicked desktop field directly (see below).
 
 ## Threading
 
@@ -105,19 +108,19 @@ Input runs on the **main thread**. Touch events and `DisplayManager` callbacks a
 there, and `AccessibilityService.dispatchGesture` expects to be called there, so `CursorController`
 and the sink's gesture state are only ever touched from one thread — no locks. The exception is
 **window queries** (`getWindowsOnAllDisplays`, node trees, dumps): the keyboard, nav row and
-fullscreen run on one worker thread in `DeskPadA11yService`, which also owns the keyboard's text
+fullscreen run on one worker thread in `GlassPadA11yService`, which also owns the keyboard's text
 buffer, because the system can take seconds to answer (see "Focus"). Gesture completion
 callbacks (`GestureResultCallback`) also fire on the main thread, which is what lets the scroll and
 drag state machines below stay lock-free.
 
 ## The load-bearing techniques
 
-These are the non-obvious parts that make DeskPad work on a second display. Each was validated
+These are the non-obvious parts that make GlassPad work on a second display. Each was validated
 against a logging test surface on a real secondary display.
 
 ### Keyboard: coordinate-based editing, no focus
 
-While DeskPad is foreground on the phone, **nothing on the desktop is input-focused** —
+While GlassPad is foreground on the phone, **nothing on the desktop is input-focused** —
 `findFocus(FOCUS_INPUT)` returns null. So typing can't rely on focus. Instead:
 
 - The field is located by the **coordinates of your last click**: `getWindowsOnAllDisplays()`
@@ -167,26 +170,26 @@ accumulated when the swipe completes — smooth momentum, no overlap.
 
 ### The cursor
 
-There is no OS mouse pointer on the desktop, so DeskPad draws its own. `CursorOverlay` attaches a
+There is no OS mouse pointer on the desktop, so GlassPad draws its own. `CursorOverlay` attaches a
 `TYPE_ACCESSIBILITY_OVERLAY` window to the external display (via `createDisplayContext`) and
 `CursorView` paints the pointer. This needs no "draw over other apps" permission. `CursorController`
 keeps the position and must **preserve it across display changes** (don't re-center on every
 `onDisplayChanged`).
 
-### Focus: only while DeskPad is in front
+### Focus: only while GlassPad is in front
 
 Android keeps one top-focused display (this Pixel has no per-display focus), and a touch on a
-focusable window moves it there. So every touch on DeskPad used to un-focus the app on the desktop
+focusable window moves it there. So every touch on GlassPad used to un-focus the app on the desktop
 (its caption greyed out, keys stopped reaching it). A `FLAG_NOT_FOCUSABLE` window avoids that —
 WindowManager doesn't move focus to a display whose touched window can't receive keys.
 
-But it must not be permanent. When the phone is the top-focused display (you just opened DeskPad)
-and DeskPad, its top activity, can't take focus, the system has **no focused window at all**:
+But it must not be permanent. When the phone is the top-focused display (you just opened GlassPad)
+and GlassPad, its top activity, can't take focus, the system has **no focused window at all**:
 accessibility then won't compute windows, so every `getWindowsOnAllDisplays` waits out a 5 s timeout
 per display, and key events to the phone ANR ("Application does not have a focused window").
 Measured on a Pixel 9 Pro XL, Android 17: 10 003 ms with the flag, 7 ms without.
 
-So `MainActivity.onTopResumedActivityChanged` makes the window focusable exactly while DeskPad is
+So `MainActivity.onTopResumedActivityChanged` makes the window focusable exactly while GlassPad is
 the top resumed activity, and non-focusable once focus moves to the desktop (your first click
 there). From then on trackpad touches leave focus on the desktop — verified: after a click on the
 desktop, sliding on the phone keeps `mTopFocusedDisplayId` on the external display.
@@ -202,7 +205,7 @@ slow answer can never freeze the UI.
 So the nav row clicks the **desktop taskbar's own buttons** instead: it finds the node whose view id
 ends in `:id/back`, `:id/home` or `:id/recent_apps` among the external display's `TYPE_SYSTEM`
 windows (never app windows) and performs `ACTION_CLICK`. That needs `flagReportViewIds`. If the
-launcher renames them, `adb logcat -s DeskPadNav` lists what the taskbar exposes. With no external
+launcher renames them, `adb logcat -s GlassPadNav` lists what the taskbar exposes. With no external
 display, the row falls back to the global actions.
 
 ### Desktop scale (optional, adb-granted)
@@ -213,7 +216,7 @@ the display's density like `wm density <dpi> -d <id>`; WindowManager stores it p
 survives reconnects.
 
 This is the one feature beyond the accessibility service: it needs `WRITE_SECURE_SETTINGS`, granted
-once with `adb shell pm grant com.example.deskpad android.permission.WRITE_SECURE_SETTINGS`. Without
+once with `adb shell pm grant io.github.joe2643.glasspad android.permission.WRITE_SECURE_SETTINGS`. Without
 the grant the panel shows that command and everything else works as before. `DisplayDensity` calls
 `IWindowManager.setForcedDisplayDensityForUser` with the app's own user id, after exempting
 `IWindowManager` from hidden-API checks in this process (the `hiddenapibypass` library). Its KDoc
@@ -232,7 +235,7 @@ commands arrive through ActivityManager's dump, which only requires `DUMP` and
 `DesktopShell` calls `IBinder.dump` on the activity service: `activities` to find the desktop's front
 app task and its windowing mode (`ActivityDump`), then the WMShell command (`WmShell`). The ⛶
 button toggles: a fullscreen task goes back into the display's desk, a desk window goes fullscreen.
-`adb logcat -s DeskPadShell` shows each step.
+`adb logcat -s GlassPadShell` shows each step.
 
 ## Safety: the lock
 
@@ -241,7 +244,7 @@ the keyboard methods check it too. When locked, no gesture or keystroke reaches 
 `MainActivity` shows a "locked" overlay. Unlock is a deliberate **press-and-hold** so an accidental
 tap can't re-enable input.
 
-## About `DeskPadIme`
+## About `GlassPadIme`
 
 The repo includes a small `InputMethodService`. It is **not** on the main typing path — typing goes
 through the accessibility service as described above, so users don't enable a keyboard. The IME is
